@@ -14,6 +14,7 @@ pub enum ScribeError {
     InvalidConfig(String),
     Clipboard(String),
     Other(String),
+    PermissionDenied(String),
 }
 
 impl fmt::Display for ScribeError {
@@ -32,6 +33,7 @@ impl fmt::Display for ScribeError {
             ScribeError::InvalidConfig(msg) => write!(f, "Invalid configuration: {}", msg),
             ScribeError::Clipboard(msg) => write!(f, "Clipboard error: {}", msg),
             ScribeError::Other(msg) => write!(f, "Error: {}", msg),
+            ScribeError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
         }
     }
 }

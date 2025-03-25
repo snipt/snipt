@@ -14,6 +14,17 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+const SWIFT_CHECK_PERMISSIONS: &str = r#"
+import Cocoa
+import Foundation
+
+let checkOptPrompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as NSString
+let options = [checkOptPrompt: false]
+let accessEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
+print(accessEnabled)
+"#;
+
 /// Start the daemon process
 pub fn start_daemon() -> Result<()> {
     // Check if daemon is already running
@@ -30,6 +41,9 @@ pub fn start_daemon() -> Result<()> {
             get_db_file_path().to_string_lossy().to_string(),
         ));
     }
+
+    // Check and request permissions if needed
+    check_and_request_permissions()?;
 
     // Fork to background on Unix systems
     #[cfg(unix)]
@@ -62,6 +76,476 @@ pub fn start_daemon() -> Result<()> {
         println!("Starting scribe daemon in the foreground (background not supported on this OS)");
         run_daemon_worker()
     }
+}
+
+fn check_and_request_permissions() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        // Check macOS accessibility permissions
+        if !has_accessibility_permission() {
+            request_macos_permissions()?;
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Windows doesn't typically require explicit permissions for keyboard monitoring
+        // but we can inform the user about potential antivirus alerts
+        println!("Note: Your antivirus software may alert about keyboard monitoring.");
+        println!("This is required for Scribe to detect text expansion triggers.");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Check if running with appropriate permissions for input events
+        if !has_input_permission() {
+            request_linux_permissions()?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn has_accessibility_permission() -> bool {
+    use std::process::Command;
+
+    // Try to check if we have accessibility permissions using Swift
+    let output = Command::new("swift")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                stdin.write_all(SWIFT_CHECK_PERMISSIONS.as_bytes())?;
+            }
+            child.wait_with_output()
+        });
+
+    if let Ok(output) = output {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout.trim() == "true"
+    } else {
+        // If the check fails, assume we don't have permission
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn request_macos_permissions() -> Result<()> {
+    // Determine which terminal application is currently in use
+    let terminal_app = detect_terminal_app();
+
+    println!("⚠️  Scribe needs accessibility permissions to detect keyboard input");
+    println!("---------------------------------------------------------------");
+    println!("Please follow these steps:");
+    println!("1. System Preferences will open to: Security & Privacy > Privacy > Accessibility");
+    println!("2. Click the lock icon at the bottom left to make changes");
+    println!("3. Look for your terminal app ('{}')", terminal_app);
+    println!("4. Check the box next to your terminal application");
+    println!("5. If it's already checked, uncheck and recheck it");
+    println!();
+    println!("Scribe runs inside your terminal, so it's your terminal app");
+    println!("that needs permission, not your shell or Scribe itself.");
+
+    use std::process::Command;
+
+    // Open System Preferences to the right section
+    let _ = Command::new("open")
+        .args(&["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+        .status();
+
+    println!("\nPress Enter once you've granted permission...");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+
+    if !has_accessibility_permission() {
+        return Err(ScribeError::PermissionDenied(format!(
+            "Accessibility permission not granted for {}",
+            terminal_app
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn detect_terminal_app() -> String {
+    use std::process::Command;
+
+    // First, try to get the frontmost terminal application name directly
+    let frontmost_app = get_frontmost_terminal_app();
+    if !frontmost_app.is_empty() {
+        return frontmost_app;
+    }
+
+    // Get the parent process ID to determine the terminal
+    let ppid = match Command::new("ps")
+        .args(&["-o", "ppid=", "-p", &format!("{}", std::process::id())])
+        .output()
+    {
+        Ok(output) => {
+            let ppid_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            ppid_str.parse::<u32>().unwrap_or(0)
+        }
+        Err(_) => 0,
+    };
+
+    // Follow the process tree up to find the terminal application
+    let terminal_app = find_terminal_in_process_tree(ppid);
+    if !terminal_app.is_empty() {
+        return terminal_app;
+    }
+
+    // If we still haven't found it, list all possible terminals for the user
+    "your terminal application (Terminal.app, iTerm2, etc.)".to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn get_frontmost_terminal_app() -> String {
+    // Try to get the frontmost app using AppleScript
+    use std::process::Command;
+
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"System Events\" to get name of first process whose frontmost is true")
+        .output();
+
+    if let Ok(output) = output {
+        let app_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Map known terminal app names to their proper name
+        match app_name.as_str() {
+            "iTerm" | "iTerm2" => return "iTerm2".to_string(),
+            "Terminal" => return "Terminal".to_string(),
+            "Alacritty" => return "Alacritty".to_string(),
+            "kitty" => return "kitty".to_string(),
+            "Hyper" => return "Hyper".to_string(),
+            "WezTerm" => return "WezTerm".to_string(),
+            _ => {
+                if app_name.contains("Terminal") || app_name.contains("Console") {
+                    return format!("{}.app", app_name);
+                }
+            }
+        }
+    }
+
+    String::new() // Return empty string if we couldn't determine the app
+}
+
+#[cfg(target_os = "macos")]
+fn find_terminal_in_process_tree(pid: u32) -> String {
+    use std::process::Command;
+
+    // No need to check if pid is zero
+    if pid == 0 {
+        return String::new();
+    }
+
+    // Get process command name
+    let output = Command::new("ps")
+        .args(&["-p", &pid.to_string(), "-o", "comm="])
+        .output();
+
+    if let Ok(output) = output {
+        let comm = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Check if this is a known terminal app
+        match comm.as_str() {
+            "iTerm2" | "iterm2" => return "iTerm2".to_string(),
+            "iTerm" => return "iTerm".to_string(),
+            "Terminal" => return "Terminal".to_string(),
+            "Alacritty" => return "Alacritty".to_string(),
+            "kitty" => return "kitty".to_string(),
+            "Hyper" => return "Hyper".to_string(),
+            "WezTerm" => return "WezTerm".to_string(),
+            _ => {}
+        }
+
+        // If it's a shell, get the parent and continue
+        if comm.contains("sh")
+            || comm == "bash"
+            || comm == "zsh"
+            || comm == "fish"
+            || comm.starts_with('-')
+        {
+            // Get parent PID
+            let ppid_output = Command::new("ps")
+                .args(&["-p", &pid.to_string(), "-o", "ppid="])
+                .output();
+
+            if let Ok(ppid_output) = ppid_output {
+                let ppid_str = String::from_utf8_lossy(&ppid_output.stdout)
+                    .trim()
+                    .to_string();
+                if let Ok(ppid) = ppid_str.parse::<u32>() {
+                    if ppid != 0 && ppid != pid {
+                        return find_terminal_in_process_tree(ppid);
+                    }
+                }
+            }
+        }
+
+        // Special case for recognizing terminal app names even if they don't match the standard names
+        if comm.to_lowercase().contains("term") && !comm.contains("daemon") {
+            return format!("{}.app", comm);
+        }
+    }
+
+    // If we still can't determine, check if there are any obvious terminal apps running
+    let terminal_check = Command::new("ps").args(&["-e", "-o", "comm="]).output();
+
+    if let Ok(output) = terminal_check {
+        let all_processes = String::from_utf8_lossy(&output.stdout);
+        for line in all_processes.lines() {
+            match line.trim() {
+                "iTerm2" => return "iTerm2".to_string(),
+                "iTerm" => return "iTerm".to_string(),
+                "Terminal" => return "Terminal".to_string(),
+                _ => {}
+            }
+        }
+    }
+
+    String::new()
+}
+
+#[cfg(target_os = "linux")]
+fn request_linux_permissions() -> Result<()> {
+    // Try to detect terminal and display environment
+    let terminal_info = detect_linux_terminal();
+    let desktop_env = detect_desktop_environment();
+
+    println!("⚠️  Scribe needs permissions to read input devices");
+    println!("-----------------------------------------------");
+    println!("Detected terminal: {}", terminal_info);
+    println!("Desktop environment: {}", desktop_env);
+    println!();
+
+    // Tailored instructions based on display environment
+    match desktop_env.as_str() {
+        "GNOME" => {
+            println!("For GNOME users:");
+            println!("1. You may need to allow input monitoring through GNOME settings");
+            println!("2. Open Settings > Privacy > Input Monitoring");
+            println!("3. Toggle on your terminal application ({})", terminal_info);
+        }
+        "KDE" => {
+            println!("For KDE Plasma users:");
+            println!("1. KDE generally doesn't restrict input monitoring by default");
+            println!("2. If you have issues, check System Settings > Privacy");
+        }
+        _ => {
+            // Generic Linux instructions
+            println!("You can grant input access in one of these ways:");
+        }
+    }
+
+    println!();
+    println!("Alternatively, you can use one of these methods:");
+    println!("1. Add your user to the 'input' group (recommended):");
+    println!("   sudo usermod -a -G input $USER");
+    println!("   (You'll need to log out and back in for this to take effect)");
+    println!();
+    println!("2. Run Scribe with sudo privileges (temporary solution):");
+    println!("   sudo scribe start");
+
+    if !is_running_as_sudo() {
+        println!("\nWould you like to continue running with sudo? (y/n)");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        if input.trim().to_lowercase() == "y" {
+            println!("Please restart Scribe with sudo: sudo scribe start");
+        } else {
+            println!("Please add your user to the input group and log out/in.");
+        }
+
+        return Err(ScribeError::PermissionDenied(
+            "Scribe needs input device permissions to function".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn detect_linux_terminal() -> String {
+    use std::env;
+
+    // Try to detect terminal from environment variables
+    if let Ok(term) = env::var("TERM_PROGRAM") {
+        return term;
+    }
+
+    // Try to get from process tree
+    let output = std::process::Command::new("ps")
+        .args(&["-p", &format!("{}", std::process::id()), "-o", "args="])
+        .output();
+
+    if let Ok(output) = output {
+        let process_name = String::from_utf8_lossy(&output.stdout);
+        if process_name.contains("gnome-terminal") {
+            return "gnome-terminal".to_string();
+        } else if process_name.contains("konsole") {
+            return "konsole".to_string();
+        } else if process_name.contains("xterm") {
+            return "xterm".to_string();
+        } else if process_name.contains("alacritty") {
+            return "alacritty".to_string();
+        } else if process_name.contains("kitty") {
+            return "kitty".to_string();
+        } else if process_name.contains("terminator") {
+            return "terminator".to_string();
+        }
+    }
+
+    // Fallback
+    "your terminal emulator".to_string()
+}
+
+#[cfg(target_os = "linux")]
+fn detect_desktop_environment() -> String {
+    use std::env;
+
+    // Common environment variables for desktop detection
+    for var in &["XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "GDMSESSION"] {
+        if let Ok(val) = env::var(var) {
+            if !val.is_empty() {
+                if val.to_uppercase().contains("GNOME") {
+                    return "GNOME".to_string();
+                } else if val.to_uppercase().contains("KDE") {
+                    return "KDE".to_string();
+                } else if val.to_uppercase().contains("XFCE") {
+                    return "XFCE".to_string();
+                } else if val.to_uppercase().contains("CINNAMON") {
+                    return "Cinnamon".to_string();
+                } else if val.to_uppercase().contains("MATE") {
+                    return "MATE".to_string();
+                } else {
+                    return val;
+                }
+            }
+        }
+    }
+
+    // Fallback
+    "Unknown".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn check_and_request_permissions() -> Result<()> {
+    // Detect Windows terminal
+    let terminal = detect_windows_terminal();
+
+    println!("⚠️  Scribe needs to monitor keyboard input to detect expansion triggers");
+    println!("-----------------------------------------------------------------");
+    println!(
+        "You may see security warnings about {} accessing keyboard input.",
+        terminal
+    );
+    println!();
+    println!("This is normal and required for Scribe's functionality:");
+    println!("1. Scribe monitors when you type the trigger character ':'");
+    println!("2. It only processes text after the trigger to expand snippets");
+    println!("3. Scribe never logs or transmits your keystrokes");
+    println!();
+
+    // Check Windows Defender settings
+    if is_defender_blocking_likely() {
+        println!("Windows Security (Defender) may block this functionality.");
+        println!("If Scribe isn't working, you may need to add an exception:");
+        println!("1. Open Windows Security > App & browser control");
+        println!("2. Click 'Exploit protection settings'");
+        println!("3. Go to 'Program settings' tab");
+        println!("4. Add {} as an exception", terminal);
+    }
+
+    println!("\nSome antivirus programs may also block keyboard monitoring.");
+    println!("If Scribe doesn't work, check your antivirus settings.");
+
+    println!("\nPress Enter to continue...");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn detect_windows_terminal() -> String {
+    use std::env;
+
+    // Try to get parent process name
+    if let Ok(output) = std::process::Command::new("wmic.exe")
+        .args(&[
+            "process",
+            "where",
+            &format!("processid={}", std::process::id()),
+            "get",
+            "parentprocessid",
+        ])
+        .output()
+    {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        if let Some(ppid_str) = output_str.lines().nth(1) {
+            let ppid = ppid_str.trim();
+            if !ppid.is_empty() {
+                if let Ok(parent_output) = std::process::Command::new("wmic.exe")
+                    .args(&[
+                        "process",
+                        "where",
+                        &format!("processid={}", ppid),
+                        "get",
+                        "name",
+                    ])
+                    .output()
+                {
+                    let parent_name = String::from_utf8_lossy(&parent_output.stdout);
+                    if let Some(name) = parent_name.lines().nth(1) {
+                        let name = name.trim();
+
+                        // Map common Windows terminals
+                        if name.eq_ignore_ascii_case("cmd.exe") {
+                            return "Command Prompt (cmd.exe)".to_string();
+                        } else if name.eq_ignore_ascii_case("powershell.exe")
+                            || name.eq_ignore_ascii_case("pwsh.exe")
+                        {
+                            return "PowerShell".to_string();
+                        } else if name.eq_ignore_ascii_case("windowsterminal.exe") {
+                            return "Windows Terminal".to_string();
+                        } else if name.eq_ignore_ascii_case("conhost.exe") {
+                            return "Console Host".to_string();
+                        } else if !name.is_empty() {
+                            return name.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback
+    "your terminal application".to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn is_defender_blocking_likely() -> bool {
+    // Check if Exploit Guard might be enabled
+    let output = std::process::Command::new("powershell.exe")
+        .args(&[
+            "-Command",
+            "Get-MpPreference | Select-Object -ExpandProperty EnableExploitProtection",
+        ])
+        .output();
+
+    if let Ok(output) = output {
+        let result = String::from_utf8_lossy(&output.stdout).trim();
+        return result == "True" || result == "1";
+    }
+
+    false
 }
 
 /// The actual daemon worker process
