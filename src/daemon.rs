@@ -82,6 +82,9 @@ pub fn run_daemon_worker() -> Result<()> {
     // Load the scribe database
     let snippets = Arc::new(Mutex::new(load_snippets()?));
 
+    // Track the last modified time of the database file
+    let last_modified = Arc::new(Mutex::new(fs::metadata(&db_path)?.modified().ok()));
+
     // Track running state
     let running = Arc::new(Mutex::new(true));
     let running_clone = Arc::clone(&running);
@@ -143,10 +146,43 @@ pub fn run_daemon_worker() -> Result<()> {
         }
     });
 
-    // Monitor for termination signals or other conditions to stop the daemon
+    // Clone references for the monitoring thread
+    let db_path_clone = db_path.clone();
+    let snippets_clone = Arc::clone(&snippets);
+    let last_modified_clone = Arc::clone(&last_modified);
+
+    // Monitor for database changes and termination signals
     let check_interval = Duration::from_secs(1);
     while *running.lock().unwrap() {
         thread::sleep(check_interval);
+
+        // Check if the database file has been modified
+        if let Ok(metadata) = fs::metadata(&db_path_clone) {
+            if let Ok(current_modified) = metadata.modified() {
+                let reload_needed = {
+                    let mut last_mod = last_modified_clone.lock().unwrap();
+                    if let Some(last_mod_time) = *last_mod {
+                        if current_modified > last_mod_time {
+                            *last_mod = Some(current_modified);
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        *last_mod = Some(current_modified);
+                        false
+                    }
+                };
+
+                if reload_needed {
+                    // Reload snippets
+                    if let Ok(new_snippets) = load_snippets() {
+                        let mut snippets_guard = snippets_clone.lock().unwrap();
+                        *snippets_guard = new_snippets;
+                    }
+                }
+            }
+        }
     }
 
     // Wait for keyboard thread to finish
