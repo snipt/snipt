@@ -1,17 +1,49 @@
 [package]
 name = "scribe"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+authors = ["Gokul <@bahdotsh>"]
+description = "A text snippet expansion tool"
+license = "MIT"
+repository = "https://github.com/bahdotsh/scribe"
+readme = "README.md"
+keywords = ["snippet", "expansion", "productivity", "text", "automation"]
+categories = ["command-line-utilities", "text-processing"]
+
+# Define the library target
+[lib]
+name = "scribe"
+path = "src/lib.rs"
+
+# Define the binary target
+[[bin]]
+name = "scribe"
+path = "src/main.rs"
 
 [dependencies]
-arboard = "3.2.0"
-clap = { version = "4.2.1", features = ["derive"] }
-daemonize = "0.5"
-crossterm = "0.28.1"
-is-terminal = "0.4.7"
-ratatui = "0.29.0"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.140"
-chrono = "0.4.40"
-rdev = "0.5.1"                                         # For keyboard events
+# UI and terminal handling
+ratatui = "0.23.0"
+crossterm = "0.27.0"
+
+# CLI argument parsing
+clap = { version = "4.3.10", features = ["derive"] }
+
+# Serialization/deserialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Date and time
+chrono = "0.4"
+
+# Keyboard and clipboard handling
+rdev = "0.5.2"
 enigo = "0.3.0"
+arboard = "3.2.0"
+
+# Platform-specific dependencies
+[target.'cfg(unix)'.dependencies]
+daemonize = "0.5.0"
+
+# Development dependencies (for tests, benchmarks, etc.)
+[dev-dependencies]
+tempfile = "3.8.0"
