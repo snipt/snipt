@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use scribe::interactive_add;
 use scribe::{
     add_snippet, daemon_status, delete_snippet, display_snippet_manager, run_daemon_worker,
     start_daemon, stop_daemon, update_snippet,
@@ -44,6 +45,8 @@ enum Commands {
         #[clap(long, short = 'c', help = "New snippet text")]
         snippet: String,
     },
+    /// Add a new snippet interactively
+    New,
     /// Start the scribe daemon
     Start,
     /// Stop the scribe daemon
@@ -86,6 +89,7 @@ fn main() {
         Some(Commands::Start) => start_daemon(),
         Some(Commands::Stop) => stop_daemon(),
         Some(Commands::Status) => daemon_status(),
+        Some(Commands::New) => interactive_add(),
         None => {
             println!("Use --help for usage information");
             Ok(())

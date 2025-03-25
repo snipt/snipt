@@ -7,15 +7,17 @@ pub mod config;
 pub mod daemon;
 pub mod error;
 pub mod expansion;
+pub mod interactive;
 pub mod keyboard;
 pub mod models;
 pub mod storage;
 pub mod ui;
 
-// Re-export the most commonly used types and functions
+// Re-export
 pub use config::{get_config_dir, SPECIAL_CHAR};
 pub use daemon::{daemon_status, run_daemon_worker, start_daemon, stop_daemon};
 pub use error::{Result, ScribeError};
+pub use interactive::interactive_add; // Add this line
 pub use models::SnippetEntry;
 pub use storage::{add_snippet, delete_snippet, load_snippets, update_snippet};
 pub use ui::display_snippet_manager;
