@@ -15,9 +15,6 @@ use std::process;
     long_about = "Scribe allows you to define text snippets and expand them as you type."
 )]
 struct CliArgs {
-    #[clap(short, long, help = "View and manage your snippets")]
-    config: bool,
-
     #[clap(subcommand)]
     commands: Option<Commands>,
 }
@@ -53,6 +50,8 @@ enum Commands {
     Stop,
     /// Check the status of the scribe daemon
     Status,
+    /// List all the configs
+    List,
 }
 
 fn main() {
@@ -66,14 +65,6 @@ fn main() {
     }
 
     let args = CliArgs::parse();
-
-    if args.config {
-        if let Err(e) = display_snippet_manager() {
-            eprintln!("Error displaying snippets: {}", e);
-            process::exit(1);
-        }
-        return;
-    }
 
     // Process subcommands
     let result = match args.commands {
@@ -90,6 +81,7 @@ fn main() {
         Some(Commands::Stop) => stop_daemon(),
         Some(Commands::Status) => daemon_status(),
         Some(Commands::New) => interactive_add(),
+        Some(Commands::List) => display_snippet_manager(),
         None => {
             println!("Use --help for usage information");
             Ok(())
