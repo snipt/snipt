@@ -1,0 +1,15 @@
+[package]
+name = "scribe"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arboard = "3.2.0"
+clap = { version = "4.2.1", features = ["derive"] }
+daemonize = "0.5"
+crossterm = "0.28.1"
+is-terminal = "0.4.7"
+ratatui = "0.29.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+chrono = "0.4.40"
