@@ -7,19 +7,6 @@ use clap::{Parser, Subcommand};
     about = "scribe",
 )]
 pub struct Scribe {
-    #[clap(long, short, help = "Start the scribe daemon")]
-    pub daemon: bool,
-
-    #[clap(long = "stop-daemon", short = 'k', help = "Stop the scribe daemon")]
-    pub stop_daemon: bool,
-
-    #[clap(
-        long = "daemon-status",
-        short = 't',
-        help = "Check if the daemon is running"
-    )]
-    pub daemon_status: bool,
-
     #[clap(short, long, help = "View the contents of the config file")]
     pub config: bool,
 
@@ -50,4 +37,10 @@ pub enum Commands {
         #[clap(long, short = 'c', help = "New snippet text")]
         snippet: String,
     },
+    /// Start the scribe daemon
+    Start,
+    /// Stop the scribe daemon
+    Stop,
+    /// Check the status of the scribe daemon
+    Status,
 }
