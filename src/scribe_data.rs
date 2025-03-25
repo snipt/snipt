@@ -11,7 +11,7 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState},
+    widgets::{Block, Borders, List, ListItem},
 };
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -154,13 +154,8 @@ pub fn print_scribe() -> Result<(), io::Error> {
 
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen)?;
+
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
-
-    let mut state = ListState::default();
-    if !entries.is_empty() {
-        state.select(Some(0));
-    }
-
     let result = run_app(&mut terminal, &entries);
 
     disable_raw_mode()?;

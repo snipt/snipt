@@ -1,13 +1,18 @@
 use std::env;
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Write};
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
-use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::thread;
+use std::time::Duration;
+
+use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+use rdev::{self, EventType, Key as RdevKey, listen};
+use serde_json::Value;
+
+const SPECIAL_CHAR: char = ':';
 
 pub fn start_daemon() -> Result<(), Box<dyn std::error::Error>> {
     // Check if daemon is already running
@@ -102,100 +107,172 @@ pub fn run_daemon_worker() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Load the scribe database
-    let scribe_db = load_scribe_db(&scribe_db_path)?;
+    let scribe_db = Arc::new(Mutex::new(load_scribe_db(&scribe_db_path)?));
 
-    // Create a buffer to read keystrokes
-    let mut buffer = String::new();
-    let (tx, rx) = std::sync::mpsc::channel();
-    let tx = Arc::new(Mutex::new(tx));
+    // Track if the daemon should continue running
+    let running = Arc::new(Mutex::new(true));
+    let running_clone = Arc::clone(&running);
 
-    let tx_clone = Arc::clone(&tx);
-    let handle: JoinHandle<_> = thread::spawn(move || {
-        let mut child = Command::new("cat")
-            .args(&["/dev/tty"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("Failed to start cat command");
+    // Data for tracking potential shortcuts
+    let current_text = Arc::new(Mutex::new(String::new()));
+    let scribe_db_clone = Arc::clone(&scribe_db);
+    let current_text_clone = Arc::clone(&current_text);
 
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
-        let mut stderr = BufReader::new(child.stderr.take().unwrap());
-
-        loop {
-            if let Some(byte) = read_byte(&mut stdout, &mut stderr) {
-                buffer.push(byte as char);
-                if let Ok(tx) = tx_clone.lock() {
-                    tx.send(buffer.clone()).unwrap();
-                }
-                buffer.clear(); // Reset the buffer after sending to prevent overlapping
+    // Start keyboard event listener in a separate thread
+    let keyboard_thread = thread::spawn(move || {
+        let mut enigo = match Enigo::new(&Settings::default()) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("Failed to initialize Enigo: {}", e);
+                return;
             }
+        };
+
+        if let Err(e) = listen(move |event| {
+            if !*running_clone.lock().unwrap() {
+                return;
+            }
+
+            match event.event_type {
+                EventType::KeyPress(key) => {
+                    let mut current = current_text_clone.lock().unwrap();
+
+                    match key {
+                        RdevKey::Space | RdevKey::Return | RdevKey::Tab => {
+                            // Check if the current text is a shortcut that starts with SPECIAL_CHAR
+                            if current.starts_with(SPECIAL_CHAR) && current.len() > 1 {
+                                let shortcut = current.trim_start_matches(SPECIAL_CHAR);
+
+                                // Access the database and look for the shortcut
+                                let db = scribe_db_clone.lock().unwrap();
+                                if let Some(snippet) = get_snippet(&db, shortcut) {
+                                    if let Some(snippet_text) = snippet.as_str() {
+                                        // Calculate total length to delete - this includes the special character
+                                        let chars_to_delete = current.len() + 1; // This includes both the special char and the shortcut text
+
+                                        // Backspace to remove everything (special char + shortcut)
+                                        for _ in 0..chars_to_delete {
+                                            // Add a small delay between backspaces to ensure they're registered
+                                            thread::sleep(Duration::from_millis(5));
+                                            if let Err(e) =
+                                                enigo.key(Key::Backspace, Direction::Click)
+                                            {
+                                                eprintln!("Error sending backspace: {}", e);
+                                            }
+                                        }
+
+                                        // Small delay before typing the replacement text
+                                        thread::sleep(Duration::from_millis(10));
+
+                                        // Type the expanded snippet
+                                        if let Err(e) = enigo.text(snippet_text) {
+                                            eprintln!("Error typing snippet: {}", e);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Clear the buffer after expansion/processing
+                            current.clear();
+                        }
+                        RdevKey::Backspace => {
+                            if !current.is_empty() {
+                                current.pop();
+                            }
+                        }
+                        _ => {
+                            // Add the character to our current buffer
+                            if let Some(c) = rdev_key_to_char(&key, &event) {
+                                current.push(c);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }) {
+            eprintln!("Error setting up keyboard listener: {:?}", e);
         }
     });
 
-    // Monitor keystrokes and handle ":sc" shortcut
-    loop {
-        match rx.recv_timeout(Duration::from_millis(500)) {
-            Ok(msg) => {
-                let mut words: Vec<&str> = msg.split_whitespace().collect();
-                while let Some(word) = words.pop() {
-                    if word == ":sc" && !words.is_empty() {
-                        if let Some(snippet) = get_snippet(&scribe_db, words.last().unwrap()) {
-                            insert_snippet(&msg, &snippet, Arc::clone(&tx))?;
-                        }
-                        break;
-                    }
-                }
-            }
-            Err(_) => break,
-        }
-        thread::sleep(Duration::from_millis(50));
+    // Monitor for termination signals or other conditions to stop the daemon
+    let check_interval = Duration::from_secs(1);
+    while *running.lock().unwrap() {
+        thread::sleep(check_interval);
+    }
+
+    // Clean up and wait for keyboard thread to finish
+    if let Err(e) = keyboard_thread.join() {
+        eprintln!("Error joining keyboard thread: {:?}", e);
     }
 
     // Cleanup
-    handle.join().unwrap();
-    fs::remove_file(&pid_file)?;
+    if let Err(e) = fs::remove_file(&pid_file) {
+        eprintln!("Error removing PID file: {}", e);
+    }
 
     Ok(())
 }
 
-fn load_scribe_db(
-    path: &Path,
-) -> Result<serde_json::Map<String, serde_json::Value>, Box<dyn std::error::Error>> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
+// Helper function to convert rdev::Key to char
+fn rdev_key_to_char(key: &RdevKey, event: &rdev::Event) -> Option<char> {
+    // Map special keys to characters
+    match key {
+        // Use proper casing for key variants
+        RdevKey::Kp0 if event.name == Some("!".to_string()) => return Some('!'),
+        RdevKey::Kp1 if event.name == Some("@".to_string()) => return Some('@'),
+        RdevKey::Kp2 if event.name == Some("#".to_string()) => return Some('#'),
+        RdevKey::Kp3 if event.name == Some("$".to_string()) => return Some('$'),
+        RdevKey::Kp4 if event.name == Some("%".to_string()) => return Some('%'),
+        RdevKey::Kp5 if event.name == Some("^".to_string()) => return Some('^'),
+        RdevKey::Kp6 if event.name == Some("&".to_string()) => return Some('&'),
+        RdevKey::Kp7 if event.name == Some("*".to_string()) => return Some('*'),
+        RdevKey::Kp8 if event.name == Some("(".to_string()) => return Some('('),
+        RdevKey::Kp9 if event.name == Some(")".to_string()) => return Some(')'),
+        RdevKey::KpMinus if event.name == Some("_".to_string()) => return Some('_'),
+        RdevKey::Equal if event.name == Some("+".to_string()) => return Some('+'),
+        RdevKey::SemiColon if event.name == Some(":".to_string()) => return Some(':'),
+        RdevKey::SemiColon if event.name == Some(";".to_string()) => return Some(';'),
+        RdevKey::Quote if event.name == Some("\"".to_string()) => return Some('"'),
+        RdevKey::Quote if event.name == Some("'".to_string()) => return Some('\''),
+        RdevKey::Comma if event.name == Some("<".to_string()) => return Some('<'),
+        RdevKey::Comma if event.name == Some(",".to_string()) => return Some(','),
+        RdevKey::Dot if event.name == Some(">".to_string()) => return Some('>'),
+        RdevKey::Dot if event.name == Some(".".to_string()) => return Some('.'),
+        RdevKey::Slash if event.name == Some("?".to_string()) => return Some('?'),
+        RdevKey::Slash if event.name == Some("/".to_string()) => return Some('/'),
+        RdevKey::BackSlash if event.name == Some("|".to_string()) => return Some('|'),
+        RdevKey::BackSlash if event.name == Some("\\".to_string()) => return Some('\\'),
+        // Add more special keys as needed
+        _ => {}
+    }
+
+    // For regular alphabetic keys, use the name
+    if let Some(name) = &event.name {
+        // Handle simple single character keys
+        if name.len() == 1 {
+            return name.chars().next();
+        }
+    }
+
+    None
+}
+
+fn load_scribe_db(path: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(file);
     serde_json::from_reader(reader).map_err(|e| e.into())
 }
 
-fn get_snippet<'a>(
-    scribe_db: &'a serde_json::Map<String, serde_json::Value>,
-    word: &str,
-) -> Option<&'a serde_json::Value> {
-    scribe_db.get(word)
-}
-
-fn insert_snippet(
-    input: &str,
-    snippet: &serde_json::Value,
-    tx: Arc<Mutex<std::sync::mpsc::Sender<String>>>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let pos = input.rfind(':').unwrap();
-    let new_input = format!("{} {}", &input[0..pos], snippet);
-    tx.lock().unwrap().send(new_input).unwrap();
-
-    Ok(())
-}
-
-fn read_byte<R1, R2>(reader: &mut BufReader<R1>, _stderr: &mut BufReader<R2>) -> Option<u8>
-where
-    R1: std::io::Read,
-    R2: std::io::Read,
-{
-    let mut buf = [0; 1];
-    if reader.read_exact(&mut buf).is_ok() {
-        Some(buf[0])
-    } else {
-        None
+fn get_snippet<'a>(scribe_db: &'a Vec<Value>, shortcut: &str) -> Option<&'a Value> {
+    for entry in scribe_db {
+        if let Some(entry_shortcut) = entry.get("shortcut").and_then(|s| s.as_str()) {
+            if entry_shortcut == shortcut {
+                return entry.get("snippet");
+            }
+        }
     }
+    None
 }
 
 pub fn stop_daemon() -> Result<(), Box<dyn std::error::Error>> {
