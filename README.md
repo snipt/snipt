@@ -20,7 +20,7 @@ Scribe is a versatile text snippet expansion tool that lets you define and use t
 2. Clone the repository and build:
 
 ```bash
-git clone https://github.com/yourusername/scribe.git
+git clone https://github.com/bahdotsh/scribe.git
 cd scribe
 cargo build --release
 ```
