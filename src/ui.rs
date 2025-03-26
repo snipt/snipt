@@ -39,7 +39,9 @@ struct AppState {
     filtered_indices: Vec<usize>,
     input_mode: InputMode,
     tab_index: usize,
-    edit_buffer: String,                   // Buffer for editing snippets
+    edit_buffer: Vec<String>, // Changed to Vec<String> for multiline editing
+    edit_cursor_pos: usize,   // Cursor position in the current line
+    edit_line: usize,         // Current line being edited
     confirm_action: Option<ConfirmAction>, // Track what we're confirming
 }
 
@@ -60,7 +62,9 @@ impl AppState {
             filtered_indices,
             input_mode: InputMode::Normal,
             tab_index: 0,
-            edit_buffer: String::new(),
+            edit_buffer: vec![String::new()],
+            edit_cursor_pos: 0,
+            edit_line: 0,
             confirm_action: None,
         }
     }
@@ -89,7 +93,6 @@ impl AppState {
             self.selected = self.filtered_indices.len() - 1;
         }
     }
-
     fn get_filtered_entry(&self, index: usize) -> Option<&SnippetEntry> {
         if self.filtered_indices.is_empty() || index >= self.filtered_indices.len() {
             return None;
@@ -97,6 +100,10 @@ impl AppState {
 
         let actual_index = self.filtered_indices[index];
         Some(&self.entries[actual_index])
+    }
+
+    fn get_selected_entry(&self) -> Option<&SnippetEntry> {
+        self.get_filtered_entry(self.selected)
     }
 
     fn get_selected_entry_index(&self) -> Option<usize> {
@@ -117,7 +124,21 @@ impl AppState {
 
     fn start_editing(&mut self) {
         if let Some(actual_index) = self.get_selected_entry_index() {
-            self.edit_buffer = self.entries[actual_index].snippet.clone();
+            // Split the snippet into lines
+            let lines: Vec<String> = self.entries[actual_index]
+                .snippet
+                .split('\n')
+                .map(|s| s.to_string())
+                .collect();
+
+            self.edit_buffer = if lines.is_empty() {
+                vec![String::new()]
+            } else {
+                lines
+            };
+
+            self.edit_cursor_pos = 0;
+            self.edit_line = 0;
             self.input_mode = InputMode::Editing;
         }
     }
@@ -125,7 +146,7 @@ impl AppState {
     fn save_edited_snippet(&mut self) -> Result<()> {
         if let Some(actual_index) = self.get_selected_entry_index() {
             let shortcut = self.entries[actual_index].shortcut.clone();
-            let new_snippet = self.edit_buffer.clone();
+            let new_snippet = self.edit_buffer.join("\n");
 
             // Update in-memory entry
             self.entries[actual_index].update_snippet(new_snippet.clone());
@@ -144,7 +165,7 @@ impl AppState {
         }
     }
 
-    // New: Update entries safely after deletion or any other operation
+    // Update entries safely after deletion or any other operation
     fn update_entries(&mut self, new_entries: Vec<SnippetEntry>) {
         self.entries = new_entries;
 
@@ -264,11 +285,31 @@ fn run_ui(
                     f.render_widget(filter, main_chunks[2]);
                 }
                 InputMode::Editing => {
-                    let edit_text = format!("Edit: {}", state.edit_buffer);
+                    // Show current line being edited and line/cursor position info
+                    let line_count = state.edit_buffer.len();
+                    let edit_info = format!(
+                        "Line {}/{} | Ctrl+w to save",
+                        state.edit_line + 1,
+                        line_count
+                    );
+
+                    let edit_text = format!("Edit: {}", state.edit_buffer[state.edit_line]);
                     let edit = Paragraph::new(edit_text)
                         .style(Style::default().fg(Color::Green))
                         .alignment(Alignment::Left);
-                    f.render_widget(edit, main_chunks[2]);
+
+                    // Split the edit area to show both the current line and position info
+                    let edit_area_chunks = Layout::default()
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                        .split(main_chunks[2]);
+
+                    f.render_widget(edit, edit_area_chunks[0]);
+
+                    let info = Paragraph::new(edit_info)
+                        .style(Style::default().fg(Color::DarkGray))
+                        .alignment(Alignment::Right);
+                    f.render_widget(info, edit_area_chunks[1]);
                 }
                 InputMode::Confirming => {
                     // Don't change the filter area during confirmation
@@ -278,6 +319,11 @@ fn run_ui(
             // Render confirmation dialog if needed
             if state.input_mode == InputMode::Confirming {
                 render_confirmation_dialog(f, state, size);
+            }
+
+            // Render multiline editor if in editing mode
+            if state.input_mode == InputMode::Editing {
+                draw_multiline_editor(f, state, size);
             }
 
             // Render status bar with keyboard shortcuts
@@ -383,11 +429,33 @@ fn run_ui(
                     } => {
                         state.input_mode = InputMode::Normal;
                         state.edit_buffer.clear();
+                        state.edit_buffer.push(String::new());
+                        state.edit_line = 0;
+                        state.edit_cursor_pos = 0;
                     }
                     KeyEvent {
                         code: KeyCode::Enter,
                         ..
                     } => {
+                        // Always insert a new line
+                        let current_line = &state.edit_buffer[state.edit_line];
+                        let rest_of_line = if state.edit_cursor_pos < current_line.len() {
+                            current_line[state.edit_cursor_pos..].to_string()
+                        } else {
+                            String::new()
+                        };
+
+                        state.edit_buffer[state.edit_line].truncate(state.edit_cursor_pos);
+                        state.edit_buffer.insert(state.edit_line + 1, rest_of_line);
+                        state.edit_line += 1;
+                        state.edit_cursor_pos = 0;
+                    }
+                    KeyEvent {
+                        code: KeyCode::Char('w'),
+                        modifiers,
+                        ..
+                    } if modifiers.contains(KeyModifiers::CONTROL) => {
+                        // Save with Ctrl+w
                         if let Err(e) = state.save_edited_snippet() {
                             return Err(e);
                         }
@@ -397,25 +465,100 @@ fn run_ui(
                         code: KeyCode::Char(c),
                         ..
                     } => {
-                        state.edit_buffer.push(c);
+                        state.edit_buffer[state.edit_line].insert(state.edit_cursor_pos, c);
+                        state.edit_cursor_pos += 1;
                     }
                     KeyEvent {
                         code: KeyCode::Backspace,
                         ..
                     } => {
-                        state.edit_buffer.pop();
+                        if state.edit_cursor_pos > 0 {
+                            state.edit_buffer[state.edit_line].remove(state.edit_cursor_pos - 1);
+                            state.edit_cursor_pos -= 1;
+                        } else if state.edit_line > 0 {
+                            // At start of line, merge with previous line
+                            let current_content = state.edit_buffer.remove(state.edit_line);
+                            state.edit_line -= 1;
+                            state.edit_cursor_pos = state.edit_buffer[state.edit_line].len();
+                            state.edit_buffer[state.edit_line].push_str(&current_content);
+                        }
+                    }
+                    KeyEvent {
+                        code: KeyCode::Delete,
+                        ..
+                    } => {
+                        if state.edit_cursor_pos < state.edit_buffer[state.edit_line].len() {
+                            state.edit_buffer[state.edit_line].remove(state.edit_cursor_pos);
+                        } else if state.edit_line < state.edit_buffer.len() - 1 {
+                            // At end of line, merge with next line
+                            let next_content = state.edit_buffer.remove(state.edit_line + 1);
+                            state.edit_buffer[state.edit_line].push_str(&next_content);
+                        }
                     }
                     KeyEvent {
                         code: KeyCode::Left,
                         ..
                     } => {
-                        // Would need cursor position tracking for proper implementation
+                        if state.edit_cursor_pos > 0 {
+                            state.edit_cursor_pos -= 1;
+                        } else if state.edit_line > 0 {
+                            // Move to end of previous line
+                            state.edit_line -= 1;
+                            state.edit_cursor_pos = state.edit_buffer[state.edit_line].len();
+                        }
                     }
                     KeyEvent {
                         code: KeyCode::Right,
                         ..
                     } => {
-                        // Would need cursor position tracking for proper implementation
+                        if state.edit_cursor_pos < state.edit_buffer[state.edit_line].len() {
+                            state.edit_cursor_pos += 1;
+                        } else if state.edit_line < state.edit_buffer.len() - 1 {
+                            // Move to start of next line
+                            state.edit_line += 1;
+                            state.edit_cursor_pos = 0;
+                        }
+                    }
+                    KeyEvent {
+                        code: KeyCode::Up, ..
+                    } => {
+                        if state.edit_line > 0 {
+                            state.edit_line -= 1;
+                            state.edit_cursor_pos = state
+                                .edit_cursor_pos
+                                .min(state.edit_buffer[state.edit_line].len());
+                        }
+                    }
+                    KeyEvent {
+                        code: KeyCode::Down,
+                        ..
+                    } => {
+                        if state.edit_line < state.edit_buffer.len() - 1 {
+                            state.edit_line += 1;
+                            state.edit_cursor_pos = state
+                                .edit_cursor_pos
+                                .min(state.edit_buffer[state.edit_line].len());
+                        }
+                    }
+                    KeyEvent {
+                        code: KeyCode::Home,
+                        ..
+                    } => {
+                        state.edit_cursor_pos = 0;
+                    }
+                    KeyEvent {
+                        code: KeyCode::End, ..
+                    } => {
+                        state.edit_cursor_pos = state.edit_buffer[state.edit_line].len();
+                    }
+                    KeyEvent {
+                        code: KeyCode::Tab, ..
+                    } => {
+                        // Insert 4 spaces for indentation
+                        for _ in 0..4 {
+                            state.edit_buffer[state.edit_line].insert(state.edit_cursor_pos, ' ');
+                            state.edit_cursor_pos += 1;
+                        }
                     }
                     _ => {}
                 },
@@ -575,10 +718,12 @@ fn render_snippet_list<B: ratatui::backend::Backend>(
                 Style::default().fg(Color::Cyan),
             );
 
-            let snippet_preview = if entry.snippet.len() > 20 {
-                format!("{}...", &entry.snippet[..17])
+            // Extract just the first line for preview
+            let preview_content = entry.snippet.lines().next().unwrap_or("").to_string();
+            let snippet_preview = if preview_content.len() > 20 {
+                format!("{}...", &preview_content[..17])
             } else {
-                entry.snippet.clone()
+                preview_content
             };
 
             let snippet_styled = Span::styled(snippet_preview, Style::default().fg(Color::White));
@@ -642,19 +787,39 @@ fn render_snippet_details<B: ratatui::backend::Backend>(
         ]);
 
         let snippet_label = Span::styled("Snippet:", Style::default().fg(Color::Yellow));
-        let snippet_text = Span::styled(&entry.snippet, Style::default().fg(Color::White));
 
-        let content = Text::from(vec![
+        // Create text to display multiline snippet with proper indentation
+        let mut content = vec![
             shortcut_line,
             timestamp_line,
             Line::from(""),
             Line::from(snippet_label),
-            Line::from(snippet_text),
-        ]);
+        ];
 
-        let paragraph = Paragraph::new(content)
+        // Split the snippet content by newlines and preserve indentation
+        for line in entry.snippet.split('\n') {
+            content.push(Line::from(Span::styled(
+                line,
+                Style::default().fg(Color::White),
+            )));
+        }
+
+        // Calculate how many lines we can show in the available space
+        let available_lines = area.height.saturating_sub(7) as usize; // Adjust for borders, headers, etc.
+
+        // If we have more lines than can fit, add an indicator
+        if content.len() > available_lines + 4 {
+            // +4 for the header lines
+            content.truncate(available_lines + 4);
+            content.push(Line::from(Span::styled(
+                "... (more lines not shown) ...",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        let paragraph = Paragraph::new(Text::from(content))
             .block(block)
-            .wrap(Wrap { trim: true });
+            .wrap(Wrap { trim: false }); // Don't trim whitespace for indentation
 
         f.render_widget(paragraph, area);
     } else {
@@ -667,61 +832,169 @@ fn render_snippet_details<B: ratatui::backend::Backend>(
     }
 }
 
+fn draw_multiline_editor<B: ratatui::backend::Backend>(
+    f: &mut Frame<B>,
+    state: &AppState,
+    size: Rect,
+) {
+    // Calculate editor dimensions
+    let width = size.width.min(80).max(40);
+    let height = size.height.min(20).max(10);
+    let x = (size.width - width) / 2;
+    let y = (size.height - height) / 2;
+
+    let editor_rect = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    // Clear the area behind the editor
+    f.render_widget(Clear, editor_rect);
+
+    // Draw editor border
+    let editor_title = format!(
+        " Editing Snippet: {} ",
+        state.get_selected_entry().map_or("", |e| &e.shortcut)
+    );
+
+    let editor_block = Block::default()
+        .borders(Borders::ALL)
+        .title(editor_title)
+        .style(Style::default().bg(Color::Black));
+
+    // Calculate inner area for text content
+    let inner_area = editor_block.inner(editor_rect);
+    f.render_widget(editor_block, editor_rect);
+
+    let visible_height = inner_area.height as usize;
+
+    // Calculate scroll offset to keep the cursor line in view
+    let scroll_offset = if state.edit_line >= visible_height {
+        state.edit_line - visible_height + 1
+    } else {
+        0
+    };
+    let visible_content: Vec<Line> = state
+        .edit_buffer
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_height)
+        .map(|(idx, line)| {
+            let line_number = Span::styled(
+                format!("{:3} ", idx + 1),
+                Style::default().fg(Color::DarkGray),
+            );
+
+            let line_content = if idx == state.edit_line {
+                // Highlight current line
+                Span::styled(line, Style::default().fg(Color::White).bg(Color::Blue))
+            } else {
+                Span::styled(line, Style::default().fg(Color::White))
+            };
+
+            Line::from(vec![line_number, line_content])
+        })
+        .collect();
+
+    // Render the lines
+    let text = Paragraph::new(visible_content)
+        .scroll((0, scroll_offset as u16))
+        .wrap(Wrap { trim: false }); // Don't trim whitespace to preserve indentation
+
+    f.render_widget(text, inner_area);
+
+    // Render help text at the bottom
+    let help_text =
+        "↑↓: Navigate Lines | Tab: Indent | Enter: New Line | Ctrl+w: Save | Esc: Cancel";
+    let help_area = Rect {
+        x,
+        y: y + height,
+        width,
+        height: 1,
+    };
+
+    let help = Paragraph::new(help_text)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+
+    f.render_widget(help, help_area);
+
+    // Manually position the cursor
+    // Since we're using a custom editor, we need to calculate where the cursor should be
+    let cursor_x = inner_area.x + 4 + state.edit_cursor_pos as u16; // +4 for line number width
+    let cursor_y = inner_area.y + (state.edit_line - scroll_offset) as u16;
+
+    if cursor_y >= inner_area.y && cursor_y < inner_area.y + inner_area.height {
+        f.set_cursor(cursor_x, cursor_y);
+    }
+}
+
 fn render_help_screen<B: ratatui::backend::Backend>(f: &mut Frame<B>, area: Rect) {
     let help_text = vec![
-        Line::from(vec![
-            Span::styled("Scribe ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::raw("is a text snippet expansion tool that lets you expand shortcuts as you type."),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Navigation", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from(vec![
-            Span::styled("  ↑/↓", Style::default().fg(Color::Green)),
-            Span::raw(": Navigate through snippets"),
-        ]),
-        Line::from(vec![
-            Span::styled("  Tab", Style::default().fg(Color::Green)),
-            Span::raw(": Switch between tabs"),
-        ]),
-        Line::from(vec![
-            Span::styled("  1/2", Style::default().fg(Color::Green)),
-            Span::raw(": Quick tab selection"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Actions", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from(vec![
-            Span::styled("  Enter", Style::default().fg(Color::Green)),
-            Span::raw(": Copy snippet to clipboard"),
-        ]),
-        Line::from(vec![
-            Span::styled("  e", Style::default().fg(Color::Green)),
-            Span::raw(": Edit selected snippet"),
-        ]),
-        Line::from(vec![
-            Span::styled("  d", Style::default().fg(Color::Green)),
-            Span::raw(": Delete selected snippet"),
-        ]),
-        Line::from(vec![
-            Span::styled("  /", Style::default().fg(Color::Green)),
-            Span::raw(": Search snippets"),
-        ]),
-        Line::from(vec![
-            Span::styled("  Esc/q", Style::default().fg(Color::Green)),
-            Span::raw(": Exit"),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Usage Tips", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        ]),
-        Line::from("• Scribe expands text starting with the special character ':' followed by your shortcut."),
-        Line::from("• Add new snippets with: scribe add --shortcut <name> --snippet <text>"),
-        Line::from("• Or interactively with: scribe new"),
-        Line::from("• Start the daemon with: scribe start"),
-    ];
+            Line::from(vec![
+                Span::styled("Scribe ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::raw("is a text snippet expansion tool that lets you expand shortcuts as you type."),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Navigation", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("  ↑/↓", Style::default().fg(Color::Green)),
+                Span::raw(": Navigate through snippets"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Tab", Style::default().fg(Color::Green)),
+                Span::raw(": Switch between tabs"),
+            ]),
+            Line::from(vec![
+                Span::styled("  1/2", Style::default().fg(Color::Green)),
+                Span::raw(": Quick tab selection"),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Actions", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("  Enter", Style::default().fg(Color::Green)),
+                Span::raw(": Copy snippet to clipboard"),
+            ]),
+            Line::from(vec![
+                            Span::styled("  e", Style::default().fg(Color::Green)),
+                            Span::raw(": Edit selected snippet"),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("  d", Style::default().fg(Color::Green)),
+                            Span::raw(": Delete selected snippet"),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("  /", Style::default().fg(Color::Green)),
+                            Span::raw(": Search snippets"),
+                        ]),
+                        Line::from(vec![
+                            Span::styled("  Esc/q", Style::default().fg(Color::Green)),
+                            Span::raw(": Exit"),
+                        ]),
+                        Line::from(""),
+                        Line::from(vec![
+                            Span::styled("Usage Tips", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        ]),
+                        Line::from("• Scribe expands text starting with the special character ':' followed by your shortcut."),
+                        Line::from("• Add new snippets with: scribe add --shortcut <name> --snippet <text>"),
+                        Line::from("• Or interactively with: scribe new"),
+                        Line::from("• Start the daemon with: scribe start"),
+                        Line::from(""),
+                        Line::from(vec![
+                            Span::styled("Multiline Snippets", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        ]),
+                        Line::from("• Scribe supports multiline snippets for code, templates, and formatted text"),
+                        Line::from("• When editing a snippet, use Enter for new lines and Tab for indentation"),
+                        Line::from("• Save your edits with Ctrl+w"),
+                        Line::from("• Indentation and formatting are preserved when snippets are expanded"),
+                    ];
 
     let paragraph = Paragraph::new(help_text)
         .block(
@@ -785,7 +1058,9 @@ fn render_status_bar(state: &AppState) -> Paragraph<'static> {
                 "↑↓:Navigate | Enter:Copy | e:Edit | d:Delete | /:Search | Tab:Switch | Esc/q:Exit"
             }
             InputMode::Filtering => "Enter:Apply Filter | Esc:Cancel",
-            InputMode::Editing => "Enter:Save | Esc:Cancel",
+            InputMode::Editing => {
+                "Ctrl+w:Save | Enter:New Line | Tab:Indent | ↑↓:Navigate Lines | Esc:Cancel"
+            }
             InputMode::Confirming => "y:Yes | n/Esc:No",
         },
         "Help" => "Tab:Switch | Esc/q:Exit",
@@ -823,6 +1098,9 @@ fn show_empty_ui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 Span::styled("scribe new", Style::default().fg(Color::Cyan)),
                 Span::raw(" (interactive mode)"),
             ]),
+            Line::from(""),
+            Line::from("The interactive mode supports multiline snippets with proper indentation."),
+            Line::from("Perfect for code snippets, templates, and formatted text."),
             Line::from(""),
             Line::from("After adding snippets, start the daemon with:"),
             Line::from(""),
