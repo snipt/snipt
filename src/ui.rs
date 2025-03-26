@@ -1,6 +1,6 @@
 use crate::error::{Result, ScribeError};
 use crate::models::SnippetEntry;
-use crate::storage::{delete_snippet, load_snippets};
+use crate::storage::{delete_snippet, load_snippets, update_snippet};
 
 use arboard::Clipboard;
 use crossterm::{
@@ -13,7 +13,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
     Frame, Terminal,
 };
 use std::io::{self, stdout};
@@ -22,6 +22,13 @@ use std::io::{self, stdout};
 enum InputMode {
     Normal,
     Filtering,
+    Editing,    // Mode for editing a snippet
+    Confirming, // Mode for confirming actions (delete)
+}
+
+enum ConfirmAction {
+    Delete,
+    // Can add more confirmation actions later
 }
 
 struct AppState {
@@ -32,19 +39,29 @@ struct AppState {
     filtered_indices: Vec<usize>,
     input_mode: InputMode,
     tab_index: usize,
+    edit_buffer: String,                   // Buffer for editing snippets
+    confirm_action: Option<ConfirmAction>, // Track what we're confirming
 }
 
 impl AppState {
     fn new(entries: Vec<SnippetEntry>) -> Self {
         let filtered_indices = (0..entries.len()).collect();
+        let selected = if entries.is_empty() {
+            0
+        } else {
+            entries.len() - 1
+        };
+
         Self {
-            selected: entries.len().saturating_sub(1),
+            selected,
             entries,
             offset: 0,
             search_query: String::new(),
             filtered_indices,
             input_mode: InputMode::Normal,
             tab_index: 0,
+            edit_buffer: String::new(),
+            confirm_action: None,
         }
     }
 
@@ -65,31 +82,29 @@ impl AppState {
                 .collect();
         }
 
-        // Adjust selected index if it's now out of bounds
-        if !self.filtered_indices.is_empty() {
-            if self.selected >= self.filtered_indices.len() {
-                self.selected = self.filtered_indices.len() - 1;
-            }
-        } else {
+        // Adjust selected index based on filtered results
+        if self.filtered_indices.is_empty() {
             self.selected = 0;
+        } else if self.selected >= self.filtered_indices.len() {
+            self.selected = self.filtered_indices.len() - 1;
         }
     }
 
     fn get_filtered_entry(&self, index: usize) -> Option<&SnippetEntry> {
-        if index < self.filtered_indices.len() {
-            let actual_index = self.filtered_indices[index];
-            Some(&self.entries[actual_index])
-        } else {
-            None
+        if self.filtered_indices.is_empty() || index >= self.filtered_indices.len() {
+            return None;
         }
+
+        let actual_index = self.filtered_indices[index];
+        Some(&self.entries[actual_index])
     }
 
     fn get_selected_entry_index(&self) -> Option<usize> {
-        if self.selected < self.filtered_indices.len() {
-            Some(self.filtered_indices[self.selected])
-        } else {
-            None
+        if self.filtered_indices.is_empty() || self.selected >= self.filtered_indices.len() {
+            return None;
         }
+
+        Some(self.filtered_indices[self.selected])
     }
 
     fn get_current_tab(&self) -> &str {
@@ -97,6 +112,50 @@ impl AppState {
             0 => "Snippets",
             1 => "Help",
             _ => "Snippets",
+        }
+    }
+
+    fn start_editing(&mut self) {
+        if let Some(actual_index) = self.get_selected_entry_index() {
+            self.edit_buffer = self.entries[actual_index].snippet.clone();
+            self.input_mode = InputMode::Editing;
+        }
+    }
+
+    fn save_edited_snippet(&mut self) -> Result<()> {
+        if let Some(actual_index) = self.get_selected_entry_index() {
+            let shortcut = self.entries[actual_index].shortcut.clone();
+            let new_snippet = self.edit_buffer.clone();
+
+            // Update in-memory entry
+            self.entries[actual_index].update_snippet(new_snippet.clone());
+
+            // Save to storage
+            update_snippet(&shortcut, new_snippet)?;
+        }
+        self.input_mode = InputMode::Normal;
+        Ok(())
+    }
+
+    fn start_delete_confirmation(&mut self) {
+        if self.get_selected_entry_index().is_some() {
+            self.confirm_action = Some(ConfirmAction::Delete);
+            self.input_mode = InputMode::Confirming;
+        }
+    }
+
+    // New: Update entries safely after deletion or any other operation
+    fn update_entries(&mut self, new_entries: Vec<SnippetEntry>) {
+        self.entries = new_entries;
+
+        // Regenerate filtered indices
+        self.apply_filter();
+
+        // Update selection
+        if self.filtered_indices.is_empty() {
+            self.selected = 0;
+        } else if self.selected >= self.filtered_indices.len() {
+            self.selected = self.filtered_indices.len() - 1;
         }
     }
 }
@@ -150,7 +209,7 @@ fn run_ui(
                 .constraints([
                     Constraint::Length(3), // Tabs area
                     Constraint::Min(5),    // Content area
-                    Constraint::Length(1), // Filter input area
+                    Constraint::Length(1), // Filter/edit input area
                     Constraint::Length(2), // Help text
                 ])
                 .split(size);
@@ -190,22 +249,36 @@ fn run_ui(
                 _ => {}
             }
 
-            // Render filter input
-            let filter_style = match state.input_mode {
-                InputMode::Normal => Style::default(),
-                InputMode::Filtering => Style::default().fg(Color::Yellow),
-            };
+            // Render filter/edit input area based on current mode
+            match state.input_mode {
+                InputMode::Normal => {
+                    let filter = Paragraph::new("Press '/' to search")
+                        .style(Style::default())
+                        .alignment(Alignment::Left);
+                    f.render_widget(filter, main_chunks[2]);
+                }
+                InputMode::Filtering => {
+                    let filter = Paragraph::new(format!("🔍 {}", state.search_query))
+                        .style(Style::default().fg(Color::Yellow))
+                        .alignment(Alignment::Left);
+                    f.render_widget(filter, main_chunks[2]);
+                }
+                InputMode::Editing => {
+                    let edit_text = format!("Edit: {}", state.edit_buffer);
+                    let edit = Paragraph::new(edit_text)
+                        .style(Style::default().fg(Color::Green))
+                        .alignment(Alignment::Left);
+                    f.render_widget(edit, main_chunks[2]);
+                }
+                InputMode::Confirming => {
+                    // Don't change the filter area during confirmation
+                }
+            }
 
-            let filter_text = if state.input_mode == InputMode::Filtering {
-                format!("🔍 {}", state.search_query)
-            } else {
-                String::from("Press '/' to search")
-            };
-
-            let filter = Paragraph::new(filter_text)
-                .style(filter_style)
-                .alignment(Alignment::Left);
-            f.render_widget(filter, main_chunks[2]);
+            // Render confirmation dialog if needed
+            if state.input_mode == InputMode::Confirming {
+                render_confirmation_dialog(f, state, size);
+            }
 
             // Render status bar with keyboard shortcuts
             let status = render_status_bar(state);
@@ -253,6 +326,22 @@ fn run_ui(
                     } => {
                         state.input_mode = InputMode::Filtering;
                     }
+                    KeyEvent {
+                        code: KeyCode::Char('e'),
+                        ..
+                    } => {
+                        if state.tab_index == 0 && !state.filtered_indices.is_empty() {
+                            state.start_editing();
+                        }
+                    }
+                    KeyEvent {
+                        code: KeyCode::Char('d'),
+                        ..
+                    } => {
+                        if state.tab_index == 0 && !state.filtered_indices.is_empty() {
+                            state.start_delete_confirmation();
+                        }
+                    }
                     _ => {
                         if state.tab_index == 0 {
                             handle_list_input(state, &mut clipboard, key, &mut should_refresh)?;
@@ -285,6 +374,86 @@ fn run_ui(
                     } => {
                         state.search_query.pop();
                         should_refresh = true;
+                    }
+                    _ => {}
+                },
+                InputMode::Editing => match key {
+                    KeyEvent {
+                        code: KeyCode::Esc, ..
+                    } => {
+                        state.input_mode = InputMode::Normal;
+                        state.edit_buffer.clear();
+                    }
+                    KeyEvent {
+                        code: KeyCode::Enter,
+                        ..
+                    } => {
+                        if let Err(e) = state.save_edited_snippet() {
+                            return Err(e);
+                        }
+                        should_refresh = true;
+                    }
+                    KeyEvent {
+                        code: KeyCode::Char(c),
+                        ..
+                    } => {
+                        state.edit_buffer.push(c);
+                    }
+                    KeyEvent {
+                        code: KeyCode::Backspace,
+                        ..
+                    } => {
+                        state.edit_buffer.pop();
+                    }
+                    KeyEvent {
+                        code: KeyCode::Left,
+                        ..
+                    } => {
+                        // Would need cursor position tracking for proper implementation
+                    }
+                    KeyEvent {
+                        code: KeyCode::Right,
+                        ..
+                    } => {
+                        // Would need cursor position tracking for proper implementation
+                    }
+                    _ => {}
+                },
+                InputMode::Confirming => match key {
+                    KeyEvent {
+                        code: KeyCode::Char('y'),
+                        ..
+                    } => {
+                        // Handle confirmation
+                        if let Some(ConfirmAction::Delete) = state.confirm_action {
+                            if let Some(actual_index) = state.get_selected_entry_index() {
+                                let shortcut = state.entries[actual_index].shortcut.clone();
+                                if let Err(e) = delete_snippet(&shortcut) {
+                                    return Err(e);
+                                }
+
+                                // Reload entries and update state safely
+                                match load_snippets() {
+                                    Ok(entries) => {
+                                        state.update_entries(entries);
+                                    }
+                                    Err(e) => return Err(e),
+                                }
+                            }
+                        }
+                        state.input_mode = InputMode::Normal;
+                        state.confirm_action = None;
+                    }
+                    KeyEvent {
+                        code: KeyCode::Char('n'),
+                        ..
+                    }
+                    | KeyEvent {
+                        code: KeyCode::Esc, ..
+                    } => {
+                        // Cancel confirmation
+                        state.input_mode = InputMode::Normal;
+                        state.confirm_action = None;
                     }
                     _ => {}
                 },
@@ -333,16 +502,17 @@ fn handle_list_input(
             modifiers: KeyModifiers::CONTROL,
             ..
         } => {
+            // For backward compatibility
             if let Some(actual_index) = state.get_selected_entry_index() {
                 let shortcut = state.entries[actual_index].shortcut.clone();
                 if let Err(e) = delete_snippet(&shortcut) {
                     return Err(e);
                 }
 
-                // Reload entries
+                // Reload entries safely
                 match load_snippets() {
                     Ok(entries) => {
-                        state.entries = entries;
+                        state.update_entries(entries);
                         *should_refresh = true;
                     }
                     Err(e) => return Err(e),
@@ -361,6 +531,20 @@ fn render_snippet_list<B: ratatui::backend::Backend>(
 ) {
     let app_height = area.height.saturating_sub(2); // Account for borders
     let max_visible_items = app_height as usize;
+
+    //  Handle empty filtered list correctly
+    if state.filtered_indices.is_empty() {
+        let list = List::new(vec![ListItem::new("No snippets found")])
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Snippets (0) "),
+            )
+            .style(Style::default().fg(Color::Gray));
+
+        f.render_widget(list, area);
+        return;
+    }
 
     // Calculate optimal offset
     let offset = if !state.filtered_indices.is_empty() {
@@ -514,12 +698,16 @@ fn render_help_screen<B: ratatui::backend::Backend>(f: &mut Frame<B>, area: Rect
             Span::raw(": Copy snippet to clipboard"),
         ]),
         Line::from(vec![
-            Span::styled("  /", Style::default().fg(Color::Green)),
-            Span::raw(": Search snippets"),
+            Span::styled("  e", Style::default().fg(Color::Green)),
+            Span::raw(": Edit selected snippet"),
         ]),
         Line::from(vec![
-            Span::styled("  Ctrl+D", Style::default().fg(Color::Green)),
-            Span::raw(": Delete current snippet"),
+            Span::styled("  d", Style::default().fg(Color::Green)),
+            Span::raw(": Delete selected snippet"),
+        ]),
+        Line::from(vec![
+            Span::styled("  /", Style::default().fg(Color::Green)),
+            Span::raw(": Search snippets"),
         ]),
         Line::from(vec![
             Span::styled("  Esc/q", Style::default().fg(Color::Green)),
@@ -531,6 +719,7 @@ fn render_help_screen<B: ratatui::backend::Backend>(f: &mut Frame<B>, area: Rect
         ]),
         Line::from("• Scribe expands text starting with the special character ':' followed by your shortcut."),
         Line::from("• Add new snippets with: scribe add --shortcut <name> --snippet <text>"),
+        Line::from("• Or interactively with: scribe new"),
         Line::from("• Start the daemon with: scribe start"),
     ];
 
@@ -545,13 +734,59 @@ fn render_help_screen<B: ratatui::backend::Backend>(f: &mut Frame<B>, area: Rect
     f.render_widget(paragraph, area);
 }
 
+fn render_confirmation_dialog<B: ratatui::backend::Backend>(
+    f: &mut Frame<B>,
+    state: &AppState,
+    size: Rect,
+) {
+    let message = match state.confirm_action {
+        Some(ConfirmAction::Delete) => {
+            if let Some(actual_index) = state.get_selected_entry_index() {
+                let shortcut = &state.entries[actual_index].shortcut;
+                format!("Delete snippet '{}' (y/n)?", shortcut)
+            } else {
+                "Delete selected snippet (y/n)?".to_string()
+            }
+        }
+        None => "Confirm action (y/n)?".to_string(),
+    };
+
+    // Create a small centered dialog box
+    let dialog_width = message.len() as u16 + 10;
+    let dialog_height = 5;
+    let dialog_x = (size.width.saturating_sub(dialog_width)) / 2;
+    let dialog_y = (size.height.saturating_sub(dialog_height)) / 2;
+
+    let dialog_rect = Rect {
+        x: dialog_x,
+        y: dialog_y,
+        width: dialog_width,
+        height: dialog_height,
+    };
+
+    let dialog = Block::default()
+        .borders(Borders::ALL)
+        .style(Style::default().bg(Color::DarkGray))
+        .title(" Confirm ");
+
+    let text = Paragraph::new(message)
+        .block(dialog)
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(Color::White));
+
+    f.render_widget(Clear, dialog_rect); // Clear the area
+    f.render_widget(text, dialog_rect);
+}
+
 fn render_status_bar(state: &AppState) -> Paragraph<'static> {
     let help_text = match state.get_current_tab() {
         "Snippets" => match state.input_mode {
             InputMode::Normal => {
-                "↑↓:Navigate | Enter:Copy | /:Search | Ctrl+D:Delete | Tab:Switch Tab | Esc/q:Exit"
+                "↑↓:Navigate | Enter:Copy | e:Edit | d:Delete | /:Search | Tab:Switch | Esc/q:Exit"
             }
             InputMode::Filtering => "Enter:Apply Filter | Esc:Cancel",
+            InputMode::Editing => "Enter:Save | Esc:Cancel",
+            InputMode::Confirming => "y:Yes | n/Esc:No",
         },
         "Help" => "Tab:Switch | Esc/q:Exit",
         _ => "",
