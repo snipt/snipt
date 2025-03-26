@@ -41,6 +41,14 @@ pub fn add_snippet(shortcut: String, snippet: String) -> Result<()> {
         Err(e) => return Err(e),
     };
 
+    // Check for duplicate shortcut
+    if snippets.iter().any(|entry| entry.shortcut == shortcut) {
+        return Err(ScribeError::Other(format!(
+            "Shortcut '{}' already exists",
+            shortcut
+        )));
+    }
+
     let entry = SnippetEntry::new(shortcut, snippet);
     snippets.push(entry);
     save_snippets(&snippets)

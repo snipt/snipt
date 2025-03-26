@@ -1,5 +1,5 @@
-use crate::error::Result;
 use crate::storage::add_snippet;
+use crate::{error::Result, ScribeError};
 
 use crossterm::{
     cursor,
@@ -68,9 +68,17 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<()> {
                     } else {
                         // Submit when pressing Enter in snippet field
                         if !shortcut.is_empty() && !snippet.is_empty() {
-                            add_snippet(shortcut, snippet)?;
-                            show_success_message(stdout)?;
-                            return Ok(());
+                            match add_snippet(shortcut.clone(), snippet.clone()) {
+                                Ok(_) => {
+                                    show_success_message(stdout)?;
+                                    return Ok(());
+                                }
+                                Err(ScribeError::Other(msg)) if msg.contains("already exists") => {
+                                    show_error_message(stdout, &msg)?;
+                                    thread_sleep(1500);
+                                }
+                                Err(e) => return Err(e),
+                            }
                         } else {
                             show_error_message(stdout, "Both fields must be filled")?;
                             thread_sleep(1500);
