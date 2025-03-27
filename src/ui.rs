@@ -1,8 +1,8 @@
 use crate::config::is_daemon_running;
 use crate::error::{Result, ScribeError};
-use crate::interactive_add;
 use crate::models::SnippetEntry;
 use crate::storage::{delete_snippet, load_snippets, update_snippet};
+use crate::{interactive_add, AddResult};
 use arboard::Clipboard;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -222,26 +222,45 @@ fn run_dashboard(
                                 execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
                                 // Run the interactive add function
-                                let result = interactive_add();
+                                let add_result = interactive_add();
 
-                                // Restore TUI immediately without clearing
-                                enable_raw_mode()?;
-                                execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                                // Always reset terminal state after interactive mode
+                                let _ = disable_raw_mode();
+                                let _ = execute!(std::io::stdout(), LeaveAlternateScreen)?;
 
-                                // Redraw UI before showing any message
-                                terminal.draw(|_| {})?;
+                                match add_result {
+                                    AddResult::Added => {
+                                        // Success - launch snippet manager as a separate process
+                                        println!("Snippet added successfully!");
+                                        println!("Press Enter to view your snippets...");
 
-                                // Show result message
-                                match result {
-                                    Ok(_) => {
-                                        show_message(
-                                            terminal,
-                                            "Snippet added successfully!",
-                                            Color::Green,
-                                            1000,
-                                        )?;
+                                        // Wait for user input
+                                        let mut input = String::new();
+                                        std::io::stdin().read_line(&mut input).unwrap_or(0);
+
+                                        // Launch snippet manager as a new process
+                                        let exe = std::env::current_exe()?;
+                                        let status =
+                                            std::process::Command::new(exe).arg("list").status()?;
+
+                                        if !status.success() {
+                                            eprintln!("Snippet manager exited with an error");
+                                        }
+
+                                        // Exit this process
+                                        return Ok(());
                                     }
-                                    Err(e) => {
+                                    AddResult::Cancelled => {
+                                        // User canceled - restore dashboard
+                                        println!("Operation canceled. Returning to dashboard...");
+                                        enable_raw_mode()?;
+                                        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                                    }
+                                    AddResult::Error(e) => {
+                                        // Error occurred - restore dashboard with error message
+                                        eprintln!("Error: {}", e);
+                                        enable_raw_mode()?;
+                                        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
                                         show_message(
                                             terminal,
                                             &format!("Error: {}", e),
@@ -250,6 +269,10 @@ fn run_dashboard(
                                         )?;
                                     }
                                 }
+
+                                // Update state for dashboard
+                                state.daemon_status = is_daemon_running()?;
+                                force_render = true;
                             }
                             2 => {
                                 // Start Daemon
