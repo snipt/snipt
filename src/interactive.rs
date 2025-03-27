@@ -71,6 +71,7 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
     let mut current_line = 0;
     let mut editor_mode = EditorMode::Insert;
     let mut error_message = None;
+    let mut snippet_added = false;
 
     // For paste handling
     let mut paste_buffer = String::new();
@@ -78,7 +79,6 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
     // For performance optimization
     let mut last_render = Instant::now();
     let mut force_render = true;
-    let snippet_added = false;
 
     loop {
         // Limit rendering frequency for better performance
@@ -141,8 +141,8 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                         match code {
                             KeyCode::Esc => {
                                 // Cancel paste operation
-                                editor_mode = EditorMode::Insert;
                                 paste_buffer.clear();
+                                return Ok(false);
                             }
                             KeyCode::Enter => {
                                 // Process paste buffer
@@ -193,16 +193,14 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                             }
                         }
                         KeyCode::Esc => {
-                            // Check if we're in Insert mode with empty fields for quick exit
-                            if editor_mode == EditorMode::Insert
-                                && shortcut.is_empty()
-                                && (snippet.len() == 1 && snippet[0].is_empty())
+                            // **IMPORTANT CHANGE**: Check for empty fields and return false to indicate cancel
+                            if shortcut.is_empty() && (snippet.len() == 1 && snippet[0].is_empty())
                             {
-                                return Ok(false); // Return false to indicate cancellation
+                                return Ok(false);
                             }
 
                             if editor_mode == EditorMode::Normal {
-                                return Ok(snippet_added); // Return based on whether we added a snippet
+                                return Ok(snippet_added);
                             } else {
                                 editor_mode = EditorMode::Normal;
                             }
@@ -252,6 +250,7 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                                             modifiers,
                                             stdout,
                                             &shortcut,
+                                            &mut snippet_added,
                                         )?;
                                     }
                                     EditorMode::Insert => {
@@ -264,6 +263,7 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                                             modifiers,
                                             stdout,
                                             &shortcut,
+                                            &mut snippet_added,
                                         )?;
                                     }
                                     EditorMode::Paste => { /* Handled above */ }
@@ -402,7 +402,6 @@ fn handle_shortcut_input(
     Ok(())
 }
 
-// Handle normal mode input (vim-like)
 fn handle_normal_mode(
     snippet: &mut Vec<String>,
     cursor_pos: &mut usize,
@@ -412,6 +411,7 @@ fn handle_normal_mode(
     modifiers: KeyModifiers,
     stdout: &mut io::Stdout,
     shortcut: &str,
+    snippet_added: &mut bool,
 ) -> Result<()> {
     match code {
         KeyCode::Char('i') => {
@@ -495,7 +495,9 @@ fn handle_normal_mode(
             }
         }
         KeyCode::Enter => {
-            submit_snippet(stdout, shortcut, snippet)?;
+            if let Ok(added) = submit_snippet(stdout, shortcut, snippet) {
+                *snippet_added = added;
+            }
             return Ok(());
         }
         _ => {}
@@ -514,12 +516,14 @@ fn handle_insert_mode(
     modifiers: KeyModifiers,
     stdout: &mut io::Stdout,
     shortcut: &str,
+    snippet_added: &mut bool,
 ) -> Result<()> {
     match code {
         KeyCode::Esc => {
             // Check if both fields are empty - if so, return false for "canceled"
             if shortcut.is_empty() && (snippet.len() == 1 && snippet[0].is_empty()) {
-                *editor_mode = EditorMode::Normal;
+                *snippet_added = false;
+                return Ok(());
             }
             *editor_mode = EditorMode::Normal;
         }
@@ -536,7 +540,9 @@ fn handle_insert_mode(
             }
         }
         KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
-            submit_snippet(stdout, shortcut, snippet)?;
+            if let Ok(added) = submit_snippet(stdout, shortcut, snippet) {
+                *snippet_added = added;
+            }
             return Ok(());
         }
         KeyCode::Backspace => {
@@ -681,10 +687,11 @@ fn draw_ui(
         )));
     }
 
-    let panel_width = width.saturating_sub(10);
-    let panel_height = height.saturating_sub(8); // Larger panel for multiline content
-    let start_x = 5;
-    let start_y = 4;
+    // Calculate layout sizes using golden ratio-inspired proportions
+    let panel_width = width.saturating_sub(8).max(40);
+    let panel_height = height.saturating_sub(6).max(15);
+    let start_x = (width - panel_width) / 2; // Center horizontally
+    let start_y = (height - panel_height) / 2; // Center vertically
 
     // Clear the screen once at the beginning
     if let Err(e) = execute!(
@@ -694,32 +701,40 @@ fn draw_ui(
     ) {
         return Err(ScribeError::Other(format!("Failed to clear screen: {}", e)));
     }
+
+    // Calculate title based on current mode
     let title = match editor_mode {
-        EditorMode::Paste => " Paste Mode - Enter to confirm, Esc to cancel ",
-        _ => " Add New Snippet ",
+        EditorMode::Paste => " ✏️  Paste Mode - Enter to confirm ",
+        EditorMode::Normal => " ✏️  Add New Snippet - Normal Mode ",
+        EditorMode::Insert => " ✏️  Add New Snippet - Insert Mode ",
     };
 
     let title_x = start_x + (panel_width - title.len() as u16) / 2;
+
+    // Draw the title with better styling
     if let Err(e) = execute!(
         stdout,
-        cursor::Hide, // Hide cursor during drawing to reduce flicker
+        cursor::Hide,
         cursor::MoveTo(title_x, start_y - 1),
         SetForegroundColor(if editor_mode == EditorMode::Paste {
             Color::Green
+        } else if editor_mode == EditorMode::Normal {
+            Color::Blue
         } else {
             Color::Cyan
         }),
+        SetBackgroundColor(Color::Black),
         Print(title),
         ResetColor
     ) {
         return Err(ScribeError::Other(format!("Failed to draw title: {}", e)));
     }
 
-    // Draw the box in a single batch
+    // Draw the outer box with rounded corners for a nicer appearance
     if let Err(e) = execute!(
         stdout,
         cursor::MoveTo(start_x, start_y),
-        SetForegroundColor(Color::Blue),
+        SetForegroundColor(Color::Cyan),
         Print("╭"),
         Print("─".repeat((panel_width - 2) as usize)),
         Print("╮")
@@ -758,33 +773,58 @@ fn draw_ui(
         )));
     }
 
-    // Draw shortcut field (skip if in paste mode)
-    if editor_mode != EditorMode::Paste {
-        let field_x = start_x + 3;
-        if let Err(e) = draw_field(
-            stdout,
-            field_x,
-            start_y + 2,
-            panel_width - 6,
-            "Shortcut:",
-            shortcut,
-            current_field == 0,
-        ) {
-            return Err(ScribeError::Other(format!(
-                "Failed to draw shortcut field: {}",
-                e
-            )));
-        }
+    // Add app header/brand (new)
+    if let Err(e) = execute!(
+        stdout,
+        cursor::MoveTo(start_x + 3, start_y + 1),
+        SetForegroundColor(Color::Magenta),
+        Print("Scribe"),
+        SetForegroundColor(Color::DarkGrey),
+        Print(" - Text Expansion Tool"),
+        ResetColor
+    ) {
+        return Err(ScribeError::Other(format!("Failed to draw header: {}", e)));
     }
 
-    // Clear the multiline field area before redrawing
+    // Draw horizontal separator under header
+    if let Err(e) = execute!(
+        stdout,
+        cursor::MoveTo(start_x + 1, start_y + 2),
+        SetForegroundColor(Color::DarkGrey),
+        Print("─".repeat((panel_width - 3) as usize)),
+        ResetColor
+    ) {
+        return Err(ScribeError::Other(format!(
+            "Failed to draw separator: {}",
+            e
+        )));
+    }
+
+    // Draw shortcut field with improved style
+    let field_x = start_x + 3;
+    if let Err(e) = draw_field(
+        stdout,
+        field_x,
+        start_y + 4,
+        panel_width - 8,
+        "Shortcut:",
+        shortcut,
+        current_field == 0,
+    ) {
+        return Err(ScribeError::Other(format!(
+            "Failed to draw shortcut field: {}",
+            e
+        )));
+    }
+
+    // Draw the multiline field with improved style
     let field_x = start_x + 3;
     if let Err(e) = draw_multiline_field(
         stdout,
         field_x,
-        start_y + 6,
+        start_y + 8,
         panel_width - 6,
-        panel_height - 10, // Allow room for the multiline field
+        panel_height - 14, // Adjust for better proportions
         "Snippet:",
         snippet,
         current_field == 1,
@@ -795,25 +835,42 @@ fn draw_ui(
             e
         )));
     }
-
-    // Draw help text
-    let normal_help =
-        "i/a: Insert | o/O: New line | h/j/k/l: Navigate | Ctrl+d: Delete line | Ctrl+w: Submit";
-    let insert_help =
-        "Esc: Cancel | Enter: New line | Arrows: Navigate | Ctrl+v: Paste | Ctrl+w: Submit";
-    let paste_help = "Enter: Confirm paste | Esc: Cancel | Type or paste text";
-
     let help_text = match editor_mode {
-        EditorMode::Normal => normal_help,
+        EditorMode::Normal => {
+            "i/a: Insert | o/O: New line | h/j/k/l: Navigate | Ctrl+d: Delete line | Enter: Submit"
+        }
         EditorMode::Insert => {
             if current_field == 0 {
-                "Tab: Next field | Esc: Cancel"
+                "Tab: Next field | Enter: Next field | Esc: Cancel"
             } else {
-                insert_help
+                "Esc: Normal mode | Enter: New line | Arrows: Navigate | Ctrl+v: Paste | Ctrl+w: Submit"
             }
         }
-        EditorMode::Paste => paste_help,
+        EditorMode::Paste => "Enter: Confirm paste | Esc: Cancel | Type or paste text",
     };
+
+    // Add a distinctive button-like bottom bar for key actions
+    let buttons_line = match editor_mode {
+        EditorMode::Insert if current_field == 1 => {
+            "[ Ctrl+W: Save ] [ Tab: Indent ] [ Esc: Normal Mode ]"
+        }
+        EditorMode::Normal => "[ Enter: Submit ] [ i: Insert Mode ] [ Esc: Cancel ]",
+        _ => "[ Ctrl+W: Save ] [ Esc: Cancel ]",
+    };
+
+    // Center the button bar
+    let buttons_x = start_x + (panel_width - buttons_line.len() as u16) / 2;
+
+    if let Err(e) = execute!(
+        stdout,
+        cursor::MoveTo(buttons_x, start_y + panel_height - 3),
+        SetForegroundColor(Color::White),
+        SetBackgroundColor(Color::DarkBlue),
+        Print(buttons_line),
+        ResetColor
+    ) {
+        return Err(ScribeError::Other(format!("Failed to draw buttons: {}", e)));
+    }
 
     // Center the help text
     let help_x = if help_text.len() as u16 <= panel_width - 4 {
@@ -848,7 +905,7 @@ fn draw_ui(
 
         if let Err(e) = execute!(
             stdout,
-            cursor::MoveTo(field_x, start_y + 5),
+            cursor::MoveTo(field_x, start_y + 7),
             SetForegroundColor(if matches!(editor_mode, EditorMode::Normal) {
                 Color::Blue
             } else {
@@ -864,7 +921,7 @@ fn draw_ui(
         }
     }
 
-    // If there's an error message, display it
+    // If there's an error message, display it with a red background for visibility
     if let Some(msg) = error_msg {
         let err_x = start_x + 2;
         let err_y = start_y + panel_height;
@@ -879,8 +936,9 @@ fn draw_ui(
         if let Err(e) = execute!(
             stdout,
             cursor::MoveTo(err_x, err_y),
-            SetForegroundColor(Color::Red),
-            Print(display_msg),
+            SetForegroundColor(Color::White),
+            SetBackgroundColor(Color::Red),
+            Print(format!(" {} ", display_msg)),
             ResetColor
         ) {
             // If we can't even print the error, just log it and continue
@@ -896,12 +954,12 @@ fn draw_ui(
         let visible_cursor_pos = cursor_pos.min(panel_width as usize - 9) as u16;
         execute!(
             stdout,
-            cursor::MoveTo(field_x + 1 + visible_cursor_pos, start_y + 3),
+            cursor::MoveTo(field_x + 1 + visible_cursor_pos, start_y + 5),
             cursor::Show
         )
     } else {
         // Position cursor in multiline field with scroll offset consideration
-        let visible_area_height = (panel_height - 10) as usize;
+        let visible_area_height = (panel_height - 14) as usize;
         let scroll_offset = if current_line >= visible_area_height {
             current_line - visible_area_height + 1
         } else {
@@ -914,7 +972,7 @@ fn draw_ui(
             stdout,
             cursor::MoveTo(
                 field_x + 1 + visible_cursor_pos,
-                start_y + 7 + visible_line_idx as u16
+                start_y + 9 + visible_line_idx as u16
             ),
             cursor::Show
         )
@@ -930,55 +988,6 @@ fn draw_ui(
     // Flush output
     if let Err(e) = stdout.flush() {
         return Err(ScribeError::Other(format!("Failed to flush output: {}", e)));
-    }
-
-    Ok(())
-}
-
-fn draw_box(stdout: &mut io::Stdout, x: u16, y: u16, width: u16, height: u16) -> Result<()> {
-    // Draw each part separately with error checking
-
-    // Top border
-    if let Err(e) = execute!(
-        stdout,
-        cursor::MoveTo(x, y),
-        SetForegroundColor(Color::Blue),
-        Print("╭"),
-        Print("─".repeat((width - 2) as usize)),
-        Print("╮")
-    ) {
-        return Err(ScribeError::Other(format!("Failed to draw box top: {}", e)));
-    }
-
-    // Side borders
-    for i in 1..height - 1 {
-        if let Err(e) = execute!(
-            stdout,
-            cursor::MoveTo(x, y + i),
-            Print("│"),
-            cursor::MoveTo(x + width - 1, y + i),
-            Print("│")
-        ) {
-            return Err(ScribeError::Other(format!(
-                "Failed to draw box sides at row {}: {}",
-                i, e
-            )));
-        }
-    }
-
-    // Bottom border
-    if let Err(e) = execute!(
-        stdout,
-        cursor::MoveTo(x, y + height - 1),
-        Print("╰"),
-        Print("─".repeat((width - 2) as usize)),
-        Print("╯"),
-        ResetColor
-    ) {
-        return Err(ScribeError::Other(format!(
-            "Failed to draw box bottom: {}",
-            e
-        )));
     }
 
     Ok(())
@@ -1141,7 +1150,11 @@ fn draw_multiline_field(
     }
 
     // Color settings
-    let bg_color = if active { Color::Blue } else { Color::Black };
+    let bg_color = if active {
+        Color::DarkBlue
+    } else {
+        Color::Black
+    };
     let fg_color = if active { Color::White } else { Color::Grey };
 
     // Draw each visible line
@@ -1291,45 +1304,115 @@ fn safe_truncate_string(s: &str, max_width: usize, add_ellipsis: bool) -> String
 fn show_success_message(stdout: &mut io::Stdout) -> Result<()> {
     // Try to get terminal size, with fallback
     let (width, height) = terminal::size().unwrap_or((80, 24));
-    let message = "✓ Snippet added successfully!";
-    let x = (width.saturating_sub(message.len() as u16)) / 2;
-    let y = height / 2;
+
+    // Create an attractive success message box
+    let message_lines = vec![
+        "✓ Snippet added successfully!",
+        "",
+        "Your snippet is now ready to use.",
+        "",
+        "Press any key to view your snippets...",
+    ];
+
+    // Calculate box dimensions
+    let box_width = 50u16;
+    let box_height = (message_lines.len() + 4) as u16;
+    let x = (width.saturating_sub(box_width)) / 2;
+    let y = (height.saturating_sub(box_height)) / 2;
 
     // Multiple commands with individual error handling
     if let Err(e) = execute!(stdout, terminal::Clear(ClearType::All)) {
         return Err(ScribeError::Other(format!("Failed to clear screen: {}", e)));
     }
 
+    // Draw the success box
     if let Err(e) = execute!(
         stdout,
+        // Draw top border
         cursor::MoveTo(x, y),
         SetForegroundColor(Color::Green),
-        Print(message),
+        Print("╭"),
+        Print("─".repeat((box_width - 2) as usize)),
+        Print("╮"),
+        // Draw title
+        cursor::MoveTo(x + (box_width - 16) / 2, y),
+        Print("╡ Success ╞"),
+        // Reset for content
+        ResetColor
+    ) {
+        return Err(ScribeError::Other(format!("Failed to draw box top: {}", e)));
+    }
+
+    // Draw message content
+    for (i, line) in message_lines.iter().enumerate() {
+        let line_y = y + i as u16 + 2; // +2 to account for top border and spacing
+
+        // Calculate position for centered text
+        let text_x = if line.is_empty() {
+            x + 2
+        } else {
+            x + (box_width - line.len() as u16) / 2
+        };
+
+        let color = if i == 0 {
+            // Make the first line (success message) brighter
+            Color::Green
+        } else {
+            Color::White
+        };
+
+        if let Err(e) = execute!(
+            stdout,
+            // Draw border
+            cursor::MoveTo(x, line_y),
+            SetForegroundColor(Color::Green),
+            Print("│"),
+            // Draw content
+            cursor::MoveTo(text_x, line_y),
+            SetForegroundColor(color),
+            Print(line),
+            // Draw border
+            cursor::MoveTo(x + box_width - 1, line_y),
+            SetForegroundColor(Color::Green),
+            Print("│"),
+            ResetColor
+        ) {
+            return Err(ScribeError::Other(format!(
+                "Failed to draw line {}: {}",
+                i, e
+            )));
+        }
+    }
+
+    // Draw bottom border
+    if let Err(e) = execute!(
+        stdout,
+        cursor::MoveTo(x, y + box_height - 1),
+        SetForegroundColor(Color::Green),
+        Print("╰"),
+        Print("─".repeat((box_width - 2) as usize)),
+        Print("╯"),
         ResetColor
     ) {
         return Err(ScribeError::Other(format!(
-            "Failed to show success message: {}",
+            "Failed to draw box bottom: {}",
             e
         )));
-    }
-
-    // Add a hint about returning to the snippet manager
-    if let Err(e) = execute!(
-        stdout,
-        cursor::MoveTo(x - 5, y + 2),
-        SetForegroundColor(Color::White),
-        Print("Returning to snippet manager..."),
-        ResetColor
-    ) {
-        // Non-critical error, can continue
-        eprintln!("Failed to show return message: {}", e);
     }
 
     if let Err(e) = stdout.flush() {
         return Err(ScribeError::Other(format!("Failed to flush output: {}", e)));
     }
 
-    thread_sleep(1000); // Reduced to 1 second for faster transition
+    // Wait for keypress but use cross-platform compatible wait instead of fixed sleep
+    let exit_at = std::time::Instant::now() + Duration::from_millis(1000);
+    while std::time::Instant::now() < exit_at {
+        if crossterm::event::poll(Duration::from_millis(100))? {
+            let _ = crossterm::event::read()?;
+            break;
+        }
+    }
+
     Ok(())
 }
 
@@ -1347,6 +1430,7 @@ fn show_error_message(stdout: &mut io::Stdout, message: &str) -> Result<()> {
         stdout,
         cursor::MoveTo(x, y),
         SetForegroundColor(Color::Red),
+        Print("⚠ "),
         Print(display_msg),
         ResetColor
     ) {

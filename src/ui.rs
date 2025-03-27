@@ -56,13 +56,7 @@ fn run_dashboard(
     state: &mut DashboardState,
 ) -> Result<()> {
     // List of available actions
-    let actions = vec![
-        "Manage Snippets",
-        "Add New Snippet",
-        "Start Daemon",
-        "Stop Daemon",
-        "Exit",
-    ];
+    let actions = vec!["Manage Snippets", "Add New Snippet"];
 
     // Add frame limiter to reduce flickering and CPU usage
     let mut last_render = std::time::Instant::now();
@@ -83,15 +77,17 @@ fn run_dashboard(
                 let main_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(3), // Title area
-                        Constraint::Length(3), // Status area
-                        Constraint::Min(10),   // Actions area
-                        Constraint::Length(1), // Help text
+                        Constraint::Length(3),  // Title area
+                        Constraint::Length(10), // Logo/banner area
+                        Constraint::Length(6),  // Status area with start/stop instructions
+                        Constraint::Min(8),     // Actions area
+                        Constraint::Length(2),  // Help text
                     ])
                     .split(size);
 
-                // Draw title
-                let title = Paragraph::new("Scribe - Text Expansion Tool")
+                // Draw title with version
+                let version = env!("CARGO_PKG_VERSION");
+                let title = Paragraph::new(format!("Scribe v{}", version))
                     .style(
                         Style::default()
                             .fg(Color::Cyan)
@@ -101,29 +97,83 @@ fn run_dashboard(
                     .block(Block::default().borders(Borders::ALL));
                 f.render_widget(title, main_chunks[0]);
 
-                // Draw daemon status
+                // ASCII art logo/banner for visual appeal
+                let logo = vec![
+                    "  ██████  ▄████▄   ██▀███   ██▓ ▄▄▄▄   ▓█████ ",
+                    "▒██    ▒ ▒██▀ ▀█  ▓██ ▒ ██▒▓██▒▓█████▄ ▓█   ▀ ",
+                    "░ ▓██▄   ▒▓█    ▄ ▓██ ░▄█ ▒▒██▒▒██▒ ▄██▒███   ",
+                    "  ▒   ██▒▒▓▓▄ ▄██▒▒██▀▀█▄  ░██░▒██░█▀  ▒▓█  ▄ ",
+                    "▒██████▒▒▒ ▓███▀ ░░██▓ ▒██▒░██░░▓█  ▀█▓░▒████▒",
+                    "▒ ▒▓▒ ▒ ░░ ░▒ ▒  ░░ ▒▓ ░▒▓░░▓  ░▒▓███▀▒░░ ▒░ ░",
+                    "░ ░▒  ░ ░  ░  ▒     ░▒ ░ ▒░ ▒ ░▒░▒   ░  ░ ░  ░",
+                ];
+
+                let logo_text: Vec<Line> = logo
+                    .iter()
+                    .map(|line| {
+                        Line::from(Span::styled(
+                            *line, // Use *line instead of line to dereference it
+                            Style::default().fg(Color::Magenta),
+                        ))
+                    })
+                    .collect();
+
+                let logo_widget = Paragraph::new(logo_text).alignment(Alignment::Center);
+                f.render_widget(logo_widget, main_chunks[1]);
+
+                // Draw daemon status with clear start/stop instructions
                 let status_text = match state.daemon_status {
                     Some(pid) => {
                         vec![
-                            Span::styled("Status: ", Style::default().fg(Color::White)),
-                            Span::styled("● ", Style::default().fg(Color::Green)), // Green dot
-                            Span::styled("ONLINE", Style::default().fg(Color::Green)),
-                            Span::styled(
-                                format!(" (PID: {})", pid),
-                                Style::default().fg(Color::DarkGray),
-                            ),
+                            Line::from(vec![
+                                Span::styled("Status: ", Style::default().fg(Color::White)),
+                                Span::styled("● ", Style::default().fg(Color::Green)), // Green dot
+                                Span::styled("RUNNING", Style::default().fg(Color::Green)),
+                                Span::styled(
+                                    format!(" (PID: {})", pid),
+                                    Style::default().fg(Color::DarkGray),
+                                ),
+                            ]),
+                            Line::from(""),
+                            Line::from(vec![
+                                Span::raw("To "),
+                                Span::styled("stop", Style::default().fg(Color::Red)),
+                                Span::raw(" the daemon, run: "),
+                                Span::styled("scribe stop", Style::default().fg(Color::Yellow)),
+                            ]),
                         ]
                     }
                     None => {
                         vec![
-                            Span::styled("Status: ", Style::default().fg(Color::White)),
-                            Span::styled("● ", Style::default().fg(Color::Red)), // Red dot
-                            Span::styled("OFFLINE", Style::default().fg(Color::Red)),
+                            Line::from(vec![
+                                Span::styled("Status: ", Style::default().fg(Color::White)),
+                                Span::styled("● ", Style::default().fg(Color::Red)), // Red dot
+                                Span::styled("STOPPED", Style::default().fg(Color::Red)),
+                            ]),
+                            Line::from(""),
+                            Line::from(vec![
+                                Span::raw("To "),
+                                Span::styled("start", Style::default().fg(Color::Green)),
+                                Span::raw(" the daemon, run: "),
+                                Span::styled("scribe start", Style::default().fg(Color::Yellow)),
+                            ]),
                         ]
                     }
                 };
 
-                let status = Paragraph::new(Line::from(status_text))
+                // Add explanation of daemon's purpose
+                let daemon_explanation = vec![
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("⚠️  ", Style::default().fg(Color::Yellow)),
+                        Span::raw("The daemon must be running for text expansion to work"),
+                    ]),
+                ];
+
+                let mut all_status_text = status_text;
+                all_status_text.extend(daemon_explanation);
+
+                let status = Paragraph::new(all_status_text)
                     .style(Style::default())
                     .alignment(Alignment::Center)
                     .block(
@@ -131,39 +181,94 @@ fn run_dashboard(
                             .borders(Borders::ALL)
                             .title(" Daemon Status "),
                     );
-                f.render_widget(status, main_chunks[1]);
+                f.render_widget(status, main_chunks[2]);
 
-                // Draw actions
-                let action_items: Vec<ListItem> = actions
+                let action_area = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(2), // Top gap
+                        Constraint::Min(8),    // Action list area
+                    ])
+                    .split(main_chunks[3]);
+
+                // Calculate dimensions for a well-spaced list
+                let list_area = action_area[1];
+                let available_width = list_area.width;
+                let list_width = (available_width as f32 * 0.5).round() as u16; // 50% of width for better readability
+                let list_x = (available_width - list_width) / 2; // Center horizontally
+
+                let list_rect = Rect {
+                    x: list_area.x + list_x,
+                    y: list_area.y,
+                    width: list_width,
+                    height: (actions.len() * 3) as u16 + 2, // More height for spacing (3 rows per item + borders)
+                };
+
+                // Create list items with center alignment and larger text
+                let items: Vec<ListItem> = actions
                     .iter()
                     .enumerate()
                     .map(|(i, &action)| {
-                        let content = Line::from(vec![
-                            if i == state.selected_action {
-                                Span::styled("> ", Style::default().fg(Color::Yellow))
-                            } else {
-                                Span::raw("  ")
-                            },
-                            Span::styled(action, Style::default().fg(Color::White)),
+                        let is_selected = i == state.selected_action;
+                        let color = match i {
+                            0 => Color::Cyan,
+                            1 => Color::Green,
+                            _ => Color::White,
+                        };
+
+                        // Calculate padding for centering text manually
+                        let action_len = action.len();
+                        let available_width = list_width as usize - 6; // Subtract some space for borders and indicator
+                        let left_padding = (available_width.saturating_sub(action_len)) / 2;
+                        let padding = " ".repeat(left_padding);
+
+                        // Create styled line with larger text (using symbols for emphasis)
+                        let prefix = if is_selected { ">" } else { " " };
+
+                        // Use empty lines for better spacing between items
+                        let item = ListItem::new(vec![
+                            // Empty line above for spacing
+                            Line::from(""),
+                            // Main content line - centered manually with padding
+                            Line::from(vec![
+                                Span::raw(padding), // Add padding for centering
+                                Span::styled(
+                                    format!("{} ", prefix),
+                                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    action,
+                                    Style::default()
+                                        .fg(if is_selected { color } else { Color::White })
+                                        // Add bold for larger appearance
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                            ]),
+                            // Empty line below for spacing
+                            Line::from(""),
                         ]);
 
-                        ListItem::new(content)
+                        item
                     })
                     .collect();
 
-                let actions_list = List::new(action_items)
-                    .block(Block::default().borders(Borders::ALL).title(" Actions "))
+                let actions_list = List::new(items)
+                    .block(
+                        Block::default()
+                            .borders(Borders::NONE) // Remove borders for cleaner look
+                            .title_alignment(Alignment::Center),
+                    )
                     .highlight_style(Style::default().add_modifier(Modifier::BOLD))
-                    .highlight_symbol("> ");
+                    .style(Style::default()); // Base style
 
-                f.render_widget(actions_list, main_chunks[2]);
+                f.render_widget(actions_list, list_rect);
 
                 // Draw help text
-                let help_text = "↑/↓: Navigate | Enter: Select | q: Quit";
+                let help_text = "↑/↓: Navigate | Tab: Navigate | Enter: Select | q: Quit";
                 let help = Paragraph::new(help_text)
                     .style(Style::default().fg(Color::DarkGray))
                     .alignment(Alignment::Center);
-                f.render_widget(help, main_chunks[3]);
+                f.render_widget(help, main_chunks[4]);
             })?;
 
             last_render = now;
@@ -177,33 +282,46 @@ fn run_dashboard(
                     KeyCode::Up => {
                         if state.selected_action > 0 {
                             state.selected_action -= 1;
-                            force_render = true; // Force render on state change
+                            force_render = true;
                         }
                     }
-                    KeyCode::Down => {
+                    KeyCode::Down | KeyCode::Tab => {
                         if state.selected_action < actions.len() - 1 {
                             state.selected_action += 1;
-                            force_render = true; // Force render on state change
+                            force_render = true;
+                        } else {
+                            // Wrap around to the first option when at the end
+                            state.selected_action = 0;
+                            force_render = true;
                         }
                     }
+                    KeyCode::BackTab => {
+                        // Shift+Tab moves backward
+                        if state.selected_action > 0 {
+                            state.selected_action -= 1;
+                        } else {
+                            // Wrap around to the last option when at the beginning
+                            state.selected_action = actions.len() - 1;
+                        }
+                        force_render = true;
+                    }
                     KeyCode::Enter => {
-                        force_render = true; // Force render on state change
+                        force_render = true;
                         match state.selected_action {
                             0 => {
-                                // Manage Snippets - Clean approach
-                                // First exit TUI mode properly
+                                // Manage Snippets
                                 disable_raw_mode()?;
                                 execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-                                // Run the snippet manager in normal terminal mode
+                                // Run the snippet manager
                                 let result = display_snippet_manager();
 
-                                // Regardless of result, restore our TUI
+                                // Restore TUI
                                 enable_raw_mode()?;
                                 execute!(terminal.backend_mut(), EnterAlternateScreen)?;
                                 terminal.clear()?;
 
-                                // If there was an error, show it briefly
+                                // Handle errors
                                 if let Err(e) = result {
                                     show_message(
                                         terminal,
@@ -224,40 +342,69 @@ fn run_dashboard(
                                 // Run the interactive add function
                                 let add_result = interactive_add();
 
-                                // Always reset terminal state after interactive mode
+                                // Reset terminal state
                                 let _ = disable_raw_mode();
                                 let _ = execute!(std::io::stdout(), LeaveAlternateScreen)?;
 
                                 match add_result {
                                     AddResult::Added => {
-                                        // Success - launch snippet manager as a separate process
-                                        println!("Snippet added successfully!");
-                                        println!("Press Enter to view your snippets...");
+                                        // Success - launch snippet manager
+                                        // Manage Snippets
+                                        disable_raw_mode()?;
+                                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-                                        // Wait for user input
-                                        let mut input = String::new();
-                                        std::io::stdin().read_line(&mut input).unwrap_or(0);
+                                        // Run the snippet manager
+                                        let result = display_snippet_manager();
 
-                                        // Launch snippet manager as a new process
-                                        let exe = std::env::current_exe()?;
-                                        let status =
-                                            std::process::Command::new(exe).arg("list").status()?;
+                                        // Restore TUI
+                                        enable_raw_mode()?;
+                                        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                                        terminal.clear()?;
 
-                                        if !status.success() {
-                                            eprintln!("Snippet manager exited with an error");
+                                        // Handle errors
+                                        if let Err(e) = result {
+                                            show_message(
+                                                terminal,
+                                                &format!("Error: {}", e),
+                                                Color::Red,
+                                                2000,
+                                            )?;
                                         }
 
+                                        // Update daemon status
+                                        state.daemon_status = is_daemon_running()?;
                                         // Exit this process
                                         return Ok(());
                                     }
                                     AddResult::Cancelled => {
                                         // User canceled - restore dashboard
-                                        println!("Operation canceled. Returning to dashboard...");
+                                        state.daemon_status = is_daemon_running()?;
+                                        disable_raw_mode()?;
+                                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+                                        // Run the snippet manager
+                                        let result = display_scribe_dashboard(state.daemon_status);
+
+                                        // Restore TUI
                                         enable_raw_mode()?;
                                         execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                                        terminal.clear()?;
+
+                                        // Handle errors
+                                        if let Err(e) = result {
+                                            show_message(
+                                                terminal,
+                                                &format!("Error: {}", e),
+                                                Color::Red,
+                                                2000,
+                                            )?;
+                                        }
+
+                                        // Update daemon status
+                                        state.daemon_status = is_daemon_running()?;
                                     }
                                     AddResult::Error(e) => {
-                                        // Error occurred - restore dashboard with error message
+                                        // Error - restore dashboard with error message
                                         eprintln!("Error: {}", e);
                                         enable_raw_mode()?;
                                         execute!(terminal.backend_mut(), EnterAlternateScreen)?;
@@ -273,156 +420,6 @@ fn run_dashboard(
                                 // Update state for dashboard
                                 state.daemon_status = is_daemon_running()?;
                                 force_render = true;
-                            }
-                            2 => {
-                                // Start Daemon
-                                if state.daemon_status.is_none() {
-                                    // Show starting message within the UI
-                                    show_message(
-                                        terminal,
-                                        "Starting daemon process...",
-                                        Color::Yellow,
-                                        500,
-                                    )?;
-
-                                    // We'll need to temporarily disable raw mode but remember we're in a UI
-                                    disable_raw_mode()?;
-
-                                    // Start daemon using a separate process that won't detach our terminal
-                                    let output =
-                                        std::process::Command::new(std::env::current_exe()?)
-                                            .arg("start")
-                                            .output();
-
-                                    // Re-enable raw mode for our UI
-                                    enable_raw_mode()?;
-
-                                    // Process the result
-                                    match output {
-                                        Ok(output) => {
-                                            // Give the daemon a moment to start
-                                            thread::sleep(Duration::from_millis(1000));
-
-                                            // Check if daemon is actually running
-                                            let is_running = is_daemon_running()?;
-                                            if is_running.is_some() {
-                                                show_message(
-                                                    terminal,
-                                                    "Daemon started successfully",
-                                                    Color::Green,
-                                                    1000,
-                                                )?;
-                                                state.daemon_status = is_running;
-                                            } else {
-                                                // Something went wrong - show the error output
-                                                let stderr =
-                                                    String::from_utf8_lossy(&output.stderr);
-                                                let error_msg = if !stderr.is_empty() {
-                                                    format!("Daemon failed to start: {}", stderr)
-                                                } else {
-                                                    "Daemon failed to start for unknown reason"
-                                                        .to_string()
-                                                };
-
-                                                show_message(
-                                                    terminal,
-                                                    &error_msg,
-                                                    Color::Red,
-                                                    2000,
-                                                )?;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            show_message(
-                                                terminal,
-                                                &format!("Failed to start daemon process: {}", e),
-                                                Color::Red,
-                                                2000,
-                                            )?;
-                                        }
-                                    }
-                                } else {
-                                    // Show "already running" message
-                                    show_message(
-                                        terminal,
-                                        "Daemon is already running",
-                                        Color::Yellow,
-                                        1000,
-                                    )?;
-                                }
-                            }
-
-                            // For the Stop Daemon action (case 3):
-                            3 => {
-                                // Stop Daemon
-                                if state.daemon_status.is_some() {
-                                    // Show stopping message
-                                    show_message(
-                                        terminal,
-                                        "Stopping daemon process...",
-                                        Color::Yellow,
-                                        500,
-                                    )?;
-
-                                    // Run the stop command as a separate process
-                                    disable_raw_mode()?;
-
-                                    let output =
-                                        std::process::Command::new(std::env::current_exe()?)
-                                            .arg("stop")
-                                            .output();
-
-                                    enable_raw_mode()?;
-
-                                    // Process the result
-                                    match output {
-                                        Ok(_) => {
-                                            // Give the daemon a moment to stop
-                                            thread::sleep(Duration::from_millis(500));
-
-                                            // Verify that daemon is actually stopped
-                                            let is_running = is_daemon_running()?;
-                                            if is_running.is_none() {
-                                                show_message(
-                                                    terminal,
-                                                    "Daemon stopped successfully",
-                                                    Color::Green,
-                                                    1000,
-                                                )?;
-                                                state.daemon_status = None;
-                                            } else {
-                                                show_message(
-                                                    terminal,
-                                                    "Failed to stop daemon - process is still running",
-                                                    Color::Red,
-                                                    2000
-                                                )?;
-                                                state.daemon_status = is_running;
-                                                // Update with actual status
-                                            }
-                                        }
-                                        Err(e) => {
-                                            show_message(
-                                                terminal,
-                                                &format!("Failed to stop daemon process: {}", e),
-                                                Color::Red,
-                                                2000,
-                                            )?;
-                                        }
-                                    }
-                                } else {
-                                    // Show "not running" message
-                                    show_message(
-                                        terminal,
-                                        "Daemon is not running",
-                                        Color::Yellow,
-                                        1000,
-                                    )?;
-                                }
-                            }
-                            4 => {
-                                // Exit
-                                state.exiting = true;
                             }
                             _ => {}
                         }
@@ -697,6 +694,7 @@ pub fn display_snippet_manager() -> Result<()> {
     disable_raw_mode()?;
     execute!(stdout(), LeaveAlternateScreen)?;
 
+    // After viewing snippets, we should return to the main menu
     result
 }
 
@@ -718,8 +716,7 @@ fn run_ui(
 
     // Add frame limiter to reduce flickering and CPU usage
     let mut last_render = std::time::Instant::now();
-    const RENDER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33); // ~30fps
-
+    const RENDER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
     loop {
         // Only render if enough time has passed or a state change occurred
         let now = std::time::Instant::now();
