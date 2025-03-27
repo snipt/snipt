@@ -64,100 +64,111 @@ fn run_dashboard(
         "Exit",
     ];
 
+    // Add frame limiter to reduce flickering and CPU usage
+    let mut last_render = std::time::Instant::now();
+    const RENDER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33); // ~30fps
+    let mut force_render = true; // Force initial render
+
     // Initial draw to prevent flickering on first render
     terminal.draw(|_| {})?;
 
     while !state.exiting {
-        // Only draw when needed, not on every loop iteration
-        terminal.draw(|f| {
-            let size = f.size();
+        // Only draw when needed (when state changes or enough time has passed)
+        let now = std::time::Instant::now();
+        if force_render || now.duration_since(last_render) >= RENDER_INTERVAL {
+            terminal.draw(|f| {
+                let size = f.size();
 
-            // Create main layout
-            let main_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3), // Title area
-                    Constraint::Length(3), // Status area
-                    Constraint::Min(10),   // Actions area
-                    Constraint::Length(1), // Help text
-                ])
-                .split(size);
+                // Create main layout
+                let main_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(3), // Title area
+                        Constraint::Length(3), // Status area
+                        Constraint::Min(10),   // Actions area
+                        Constraint::Length(1), // Help text
+                    ])
+                    .split(size);
 
-            // Draw title
-            let title = Paragraph::new("Scribe - Text Expansion Tool")
-                .style(
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .alignment(Alignment::Center)
-                .block(Block::default().borders(Borders::ALL));
-            f.render_widget(title, main_chunks[0]);
+                // Draw title
+                let title = Paragraph::new("Scribe - Text Expansion Tool")
+                    .style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .alignment(Alignment::Center)
+                    .block(Block::default().borders(Borders::ALL));
+                f.render_widget(title, main_chunks[0]);
 
-            // Draw daemon status
-            let status_text = match state.daemon_status {
-                Some(pid) => {
-                    vec![
-                        Span::styled("Status: ", Style::default().fg(Color::White)),
-                        Span::styled("● ", Style::default().fg(Color::Green)), // Green dot
-                        Span::styled("ONLINE", Style::default().fg(Color::Green)),
-                        Span::styled(
-                            format!(" (PID: {})", pid),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                    ]
-                }
-                None => {
-                    vec![
-                        Span::styled("Status: ", Style::default().fg(Color::White)),
-                        Span::styled("● ", Style::default().fg(Color::Red)), // Red dot
-                        Span::styled("OFFLINE", Style::default().fg(Color::Red)),
-                    ]
-                }
-            };
+                // Draw daemon status
+                let status_text = match state.daemon_status {
+                    Some(pid) => {
+                        vec![
+                            Span::styled("Status: ", Style::default().fg(Color::White)),
+                            Span::styled("● ", Style::default().fg(Color::Green)), // Green dot
+                            Span::styled("ONLINE", Style::default().fg(Color::Green)),
+                            Span::styled(
+                                format!(" (PID: {})", pid),
+                                Style::default().fg(Color::DarkGray),
+                            ),
+                        ]
+                    }
+                    None => {
+                        vec![
+                            Span::styled("Status: ", Style::default().fg(Color::White)),
+                            Span::styled("● ", Style::default().fg(Color::Red)), // Red dot
+                            Span::styled("OFFLINE", Style::default().fg(Color::Red)),
+                        ]
+                    }
+                };
 
-            let status = Paragraph::new(Line::from(status_text))
-                .style(Style::default())
-                .alignment(Alignment::Center)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" Daemon Status "),
-                );
-            f.render_widget(status, main_chunks[1]);
+                let status = Paragraph::new(Line::from(status_text))
+                    .style(Style::default())
+                    .alignment(Alignment::Center)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(" Daemon Status "),
+                    );
+                f.render_widget(status, main_chunks[1]);
 
-            // Draw actions
-            let action_items: Vec<ListItem> = actions
-                .iter()
-                .enumerate()
-                .map(|(i, &action)| {
-                    let content = Line::from(vec![
-                        if i == state.selected_action {
-                            Span::styled("> ", Style::default().fg(Color::Yellow))
-                        } else {
-                            Span::raw("  ")
-                        },
-                        Span::styled(action, Style::default().fg(Color::White)),
-                    ]);
+                // Draw actions
+                let action_items: Vec<ListItem> = actions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &action)| {
+                        let content = Line::from(vec![
+                            if i == state.selected_action {
+                                Span::styled("> ", Style::default().fg(Color::Yellow))
+                            } else {
+                                Span::raw("  ")
+                            },
+                            Span::styled(action, Style::default().fg(Color::White)),
+                        ]);
 
-                    ListItem::new(content)
-                })
-                .collect();
+                        ListItem::new(content)
+                    })
+                    .collect();
 
-            let actions_list = List::new(action_items)
-                .block(Block::default().borders(Borders::ALL).title(" Actions "))
-                .highlight_style(Style::default().add_modifier(Modifier::BOLD))
-                .highlight_symbol("> ");
+                let actions_list = List::new(action_items)
+                    .block(Block::default().borders(Borders::ALL).title(" Actions "))
+                    .highlight_style(Style::default().add_modifier(Modifier::BOLD))
+                    .highlight_symbol("> ");
 
-            f.render_widget(actions_list, main_chunks[2]);
+                f.render_widget(actions_list, main_chunks[2]);
 
-            // Draw help text
-            let help_text = "↑/↓: Navigate | Enter: Select | q: Quit";
-            let help = Paragraph::new(help_text)
-                .style(Style::default().fg(Color::DarkGray))
-                .alignment(Alignment::Center);
-            f.render_widget(help, main_chunks[3]);
-        })?;
+                // Draw help text
+                let help_text = "↑/↓: Navigate | Enter: Select | q: Quit";
+                let help = Paragraph::new(help_text)
+                    .style(Style::default().fg(Color::DarkGray))
+                    .alignment(Alignment::Center);
+                f.render_widget(help, main_chunks[3]);
+            })?;
+
+            last_render = now;
+            force_render = false;
+        }
 
         // Handle input with a timeout to prevent excessive CPU usage
         if crossterm::event::poll(Duration::from_millis(100))? {
@@ -166,14 +177,17 @@ fn run_dashboard(
                     KeyCode::Up => {
                         if state.selected_action > 0 {
                             state.selected_action -= 1;
+                            force_render = true; // Force render on state change
                         }
                     }
                     KeyCode::Down => {
                         if state.selected_action < actions.len() - 1 {
                             state.selected_action += 1;
+                            force_render = true; // Force render on state change
                         }
                     }
                     KeyCode::Enter => {
+                        force_render = true; // Force render on state change
                         match state.selected_action {
                             0 => {
                                 // Manage Snippets - Clean approach
@@ -203,26 +217,38 @@ fn run_dashboard(
                                 state.daemon_status = is_daemon_running()?;
                             }
                             1 => {
-                                // Add New Snippet - Clean approach
+                                // Add New Snippet
                                 disable_raw_mode()?;
                                 execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
                                 // Run the interactive add function
                                 let result = interactive_add();
 
-                                // Restore TUI
+                                // Restore TUI immediately without clearing
                                 enable_raw_mode()?;
                                 execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                                terminal.clear()?;
 
-                                // Show error if needed
-                                if let Err(e) = result {
-                                    show_message(
-                                        terminal,
-                                        &format!("Error: {}", e),
-                                        Color::Red,
-                                        2000,
-                                    )?;
+                                // Redraw UI before showing any message
+                                terminal.draw(|_| {})?;
+
+                                // Show result message
+                                match result {
+                                    Ok(_) => {
+                                        show_message(
+                                            terminal,
+                                            "Snippet added successfully!",
+                                            Color::Green,
+                                            1000,
+                                        )?;
+                                    }
+                                    Err(e) => {
+                                        show_message(
+                                            terminal,
+                                            &format!("Error: {}", e),
+                                            Color::Red,
+                                            2000,
+                                        )?;
+                                    }
                                 }
                             }
                             2 => {
@@ -665,393 +691,418 @@ fn run_ui(
     };
 
     let mut should_refresh = false;
+    let mut force_render = true; // Force initial render
+
+    // Add frame limiter to reduce flickering and CPU usage
+    let mut last_render = std::time::Instant::now();
+    const RENDER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33); // ~30fps
 
     loop {
-        terminal.draw(|f| {
-            let size = f.size();
+        // Only render if enough time has passed or a state change occurred
+        let now = std::time::Instant::now();
+        if force_render || should_refresh || now.duration_since(last_render) >= RENDER_INTERVAL {
+            terminal.draw(|f| {
+                let size = f.size();
 
-            // Create main layout
-            let main_chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3), // Tabs area
-                    Constraint::Min(5),    // Content area
-                    Constraint::Length(1), // Filter/edit input area
-                    Constraint::Length(2), // Help text
-                ])
-                .split(size);
+                // Create main layout
+                let main_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(3), // Tabs area
+                        Constraint::Min(5),    // Content area
+                        Constraint::Length(1), // Filter/edit input area
+                        Constraint::Length(2), // Help text
+                    ])
+                    .split(size);
 
-            // Render tab bar
-            let titles = vec!["Snippets", "Help"]
-                .iter()
-                .map(|t| Span::styled(*t, Style::default().fg(Color::White)))
-                .collect();
+                // Render tab bar
+                let titles = vec!["Snippets", "Help"]
+                    .iter()
+                    .map(|t| Span::styled(*t, Style::default().fg(Color::White)))
+                    .collect();
 
-            let tabs = Tabs::new(titles)
-                .block(Block::default().borders(Borders::ALL).title(" Scribe "))
-                .select(state.tab_index)
-                .style(Style::default().fg(Color::White))
-                .highlight_style(
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                );
-
-            f.render_widget(tabs, main_chunks[0]);
-
-            match state.tab_index {
-                0 => {
-                    // Content layout - split into list and details
-                    let content_chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-                        .split(main_chunks[1]);
-
-                    render_snippet_list(f, state, content_chunks[0]);
-                    render_snippet_details(f, state, content_chunks[1]);
-                }
-                1 => {
-                    render_help_screen(f, main_chunks[1]);
-                }
-                _ => {}
-            }
-
-            // Render filter/edit input area based on current mode
-            match state.input_mode {
-                InputMode::Normal => {
-                    let filter = Paragraph::new("Press '/' to search")
-                        .style(Style::default())
-                        .alignment(Alignment::Left);
-                    f.render_widget(filter, main_chunks[2]);
-                }
-                InputMode::Filtering => {
-                    let filter = Paragraph::new(format!("🔍 {}", state.search_query))
-                        .style(Style::default().fg(Color::Yellow))
-                        .alignment(Alignment::Left);
-                    f.render_widget(filter, main_chunks[2]);
-                }
-                InputMode::Editing => {
-                    // Show current line being edited and line/cursor position info
-                    let line_count = state.edit_buffer.len();
-                    let edit_info = format!(
-                        "Line {}/{} | Ctrl+w to save",
-                        state.edit_line + 1,
-                        line_count
+                let tabs = Tabs::new(titles)
+                    .block(Block::default().borders(Borders::ALL).title(" Scribe "))
+                    .select(state.tab_index)
+                    .style(Style::default().fg(Color::White))
+                    .highlight_style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
                     );
 
-                    let edit_text = format!("Edit: {}", state.edit_buffer[state.edit_line]);
-                    let edit = Paragraph::new(edit_text)
-                        .style(Style::default().fg(Color::Green))
-                        .alignment(Alignment::Left);
+                f.render_widget(tabs, main_chunks[0]);
 
-                    // Split the edit area to show both the current line and position info
-                    let edit_area_chunks = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
-                        .split(main_chunks[2]);
+                match state.tab_index {
+                    0 => {
+                        // Content layout - split into list and details
+                        let content_chunks = Layout::default()
+                            .direction(Direction::Horizontal)
+                            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+                            .split(main_chunks[1]);
 
-                    f.render_widget(edit, edit_area_chunks[0]);
-
-                    let info = Paragraph::new(edit_info)
-                        .style(Style::default().fg(Color::DarkGray))
-                        .alignment(Alignment::Right);
-                    f.render_widget(info, edit_area_chunks[1]);
+                        render_snippet_list(f, state, content_chunks[0]);
+                        render_snippet_details(f, state, content_chunks[1]);
+                    }
+                    1 => {
+                        render_help_screen(f, main_chunks[1]);
+                    }
+                    _ => {}
                 }
-                InputMode::Confirming => {
-                    // Don't change the filter area during confirmation
+
+                // Render filter/edit input area based on current mode
+                match state.input_mode {
+                    InputMode::Normal => {
+                        let filter = Paragraph::new("Press '/' to search")
+                            .style(Style::default())
+                            .alignment(Alignment::Left);
+                        f.render_widget(filter, main_chunks[2]);
+                    }
+                    InputMode::Filtering => {
+                        let filter = Paragraph::new(format!("🔍 {}", state.search_query))
+                            .style(Style::default().fg(Color::Yellow))
+                            .alignment(Alignment::Left);
+                        f.render_widget(filter, main_chunks[2]);
+                    }
+                    InputMode::Editing => {
+                        // Show current line being edited and line/cursor position info
+                        let line_count = state.edit_buffer.len();
+                        let edit_info = format!(
+                            "Line {}/{} | Ctrl+w to save",
+                            state.edit_line + 1,
+                            line_count
+                        );
+
+                        let edit_text = format!("Edit: {}", state.edit_buffer[state.edit_line]);
+                        let edit = Paragraph::new(edit_text)
+                            .style(Style::default().fg(Color::Green))
+                            .alignment(Alignment::Left);
+
+                        // Split the edit area to show both the current line and position info
+                        let edit_area_chunks = Layout::default()
+                            .direction(Direction::Horizontal)
+                            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                            .split(main_chunks[2]);
+
+                        f.render_widget(edit, edit_area_chunks[0]);
+
+                        let info = Paragraph::new(edit_info)
+                            .style(Style::default().fg(Color::DarkGray))
+                            .alignment(Alignment::Right);
+                        f.render_widget(info, edit_area_chunks[1]);
+                    }
+                    InputMode::Confirming => {
+                        // Don't change the filter area during confirmation
+                    }
                 }
-            }
 
-            // Render confirmation dialog if needed
-            if state.input_mode == InputMode::Confirming {
-                render_confirmation_dialog(f, state, size);
-            }
+                // Render confirmation dialog if needed
+                if state.input_mode == InputMode::Confirming {
+                    render_confirmation_dialog(f, state, size);
+                }
 
-            // Render multiline editor if in editing mode
-            if state.input_mode == InputMode::Editing {
-                draw_multiline_editor(f, state, size);
-            }
+                // Render multiline editor if in editing mode
+                if state.input_mode == InputMode::Editing {
+                    draw_multiline_editor(f, state, size);
+                }
 
-            // Render status bar with keyboard shortcuts
-            let status = render_status_bar(state);
-            f.render_widget(status, main_chunks[3]);
-        })?;
+                // Render status bar with keyboard shortcuts
+                let status = render_status_bar(state);
+                f.render_widget(status, main_chunks[3]);
+            })?;
+
+            last_render = now;
+            force_render = false;
+        }
 
         if should_refresh {
             should_refresh = false;
             state.apply_filter();
+            force_render = true; // Force render after filter is applied
         }
+        // Handle input with a shorter timeout to remain responsive
+        if crossterm::event::poll(Duration::from_millis(16))? {
+            // Handle input
+            if let Ok(Event::Key(key)) = event::read() {
+                force_render = true; // Force render on any key input
+                match state.input_mode {
+                    InputMode::Normal => match key {
+                        KeyEvent {
+                            code: KeyCode::Char('q'),
+                            ..
+                        }
+                        | KeyEvent {
+                            code: KeyCode::Esc, ..
+                        } => {
+                            return Ok(());
+                        }
+                        KeyEvent {
+                            code: KeyCode::Char('1'),
+                            ..
+                        } => {
+                            state.tab_index = 0;
+                        }
+                        KeyEvent {
+                            code: KeyCode::Char('2'),
+                            ..
+                        } => {
+                            state.tab_index = 1;
+                        }
+                        KeyEvent {
+                            code: KeyCode::Tab, ..
+                        } => {
+                            state.tab_index = (state.tab_index + 1) % 2;
+                        }
+                        KeyEvent {
+                            code: KeyCode::Char('/'),
+                            ..
+                        } => {
+                            state.input_mode = InputMode::Filtering;
+                        }
+                        KeyEvent {
+                            code: KeyCode::Char('e'),
+                            ..
+                        } => {
+                            if state.tab_index == 0 && !state.filtered_indices.is_empty() {
+                                state.start_editing();
+                            }
+                        }
+                        KeyEvent {
+                            code: KeyCode::Char('d'),
+                            ..
+                        } => {
+                            if state.tab_index == 0 && !state.filtered_indices.is_empty() {
+                                state.start_delete_confirmation();
+                            }
+                        }
+                        _ => {
+                            if state.tab_index == 0 {
+                                handle_list_input(
+                                    terminal,
+                                    state,
+                                    &mut clipboard,
+                                    key,
+                                    &mut should_refresh,
+                                )?;
+                            }
+                        }
+                    },
+                    InputMode::Filtering => match key {
+                        KeyEvent {
+                            code: KeyCode::Esc, ..
+                        } => {
+                            state.input_mode = InputMode::Normal;
+                        }
+                        KeyEvent {
+                            code: KeyCode::Enter,
+                            ..
+                        } => {
+                            state.input_mode = InputMode::Normal;
+                            should_refresh = true;
+                        }
+                        KeyEvent {
+                            code: KeyCode::Char(c),
+                            ..
+                        } => {
+                            state.search_query.push(c);
+                            should_refresh = true;
+                        }
+                        KeyEvent {
+                            code: KeyCode::Backspace,
+                            ..
+                        } => {
+                            state.search_query.pop();
+                            should_refresh = true;
+                        }
+                        _ => {}
+                    },
+                    InputMode::Editing => match key {
+                        KeyEvent {
+                            code: KeyCode::Esc, ..
+                        } => {
+                            state.input_mode = InputMode::Normal;
+                            state.edit_buffer.clear();
+                            state.edit_buffer.push(String::new());
+                            state.edit_line = 0;
+                            state.edit_cursor_pos = 0;
+                        }
+                        KeyEvent {
+                            code: KeyCode::Enter,
+                            ..
+                        } => {
+                            // Always insert a new line
+                            let current_line = &state.edit_buffer[state.edit_line];
+                            let rest_of_line = if state.edit_cursor_pos < current_line.len() {
+                                current_line[state.edit_cursor_pos..].to_string()
+                            } else {
+                                String::new()
+                            };
 
-        // Handle input
-        if let Ok(Event::Key(key)) = event::read() {
-            match state.input_mode {
-                InputMode::Normal => match key {
-                    KeyEvent {
-                        code: KeyCode::Char('q'),
-                        ..
-                    }
-                    | KeyEvent {
-                        code: KeyCode::Esc, ..
-                    } => {
-                        return Ok(());
-                    }
-                    KeyEvent {
-                        code: KeyCode::Char('1'),
-                        ..
-                    } => {
-                        state.tab_index = 0;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Char('2'),
-                        ..
-                    } => {
-                        state.tab_index = 1;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Tab, ..
-                    } => {
-                        state.tab_index = (state.tab_index + 1) % 2;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Char('/'),
-                        ..
-                    } => {
-                        state.input_mode = InputMode::Filtering;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Char('e'),
-                        ..
-                    } => {
-                        if state.tab_index == 0 && !state.filtered_indices.is_empty() {
-                            state.start_editing();
-                        }
-                    }
-                    KeyEvent {
-                        code: KeyCode::Char('d'),
-                        ..
-                    } => {
-                        if state.tab_index == 0 && !state.filtered_indices.is_empty() {
-                            state.start_delete_confirmation();
-                        }
-                    }
-                    _ => {
-                        if state.tab_index == 0 {
-                            handle_list_input(state, &mut clipboard, key, &mut should_refresh)?;
-                        }
-                    }
-                },
-                InputMode::Filtering => match key {
-                    KeyEvent {
-                        code: KeyCode::Esc, ..
-                    } => {
-                        state.input_mode = InputMode::Normal;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Enter,
-                        ..
-                    } => {
-                        state.input_mode = InputMode::Normal;
-                        should_refresh = true;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Char(c),
-                        ..
-                    } => {
-                        state.search_query.push(c);
-                        should_refresh = true;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Backspace,
-                        ..
-                    } => {
-                        state.search_query.pop();
-                        should_refresh = true;
-                    }
-                    _ => {}
-                },
-                InputMode::Editing => match key {
-                    KeyEvent {
-                        code: KeyCode::Esc, ..
-                    } => {
-                        state.input_mode = InputMode::Normal;
-                        state.edit_buffer.clear();
-                        state.edit_buffer.push(String::new());
-                        state.edit_line = 0;
-                        state.edit_cursor_pos = 0;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Enter,
-                        ..
-                    } => {
-                        // Always insert a new line
-                        let current_line = &state.edit_buffer[state.edit_line];
-                        let rest_of_line = if state.edit_cursor_pos < current_line.len() {
-                            current_line[state.edit_cursor_pos..].to_string()
-                        } else {
-                            String::new()
-                        };
-
-                        state.edit_buffer[state.edit_line].truncate(state.edit_cursor_pos);
-                        state.edit_buffer.insert(state.edit_line + 1, rest_of_line);
-                        state.edit_line += 1;
-                        state.edit_cursor_pos = 0;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Char('w'),
-                        modifiers,
-                        ..
-                    } if modifiers.contains(KeyModifiers::CONTROL) => {
-                        // Save with Ctrl+w
-                        if let Err(e) = state.save_edited_snippet() {
-                            return Err(e);
-                        }
-                        should_refresh = true;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Char(c),
-                        ..
-                    } => {
-                        state.edit_buffer[state.edit_line].insert(state.edit_cursor_pos, c);
-                        state.edit_cursor_pos += 1;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Backspace,
-                        ..
-                    } => {
-                        if state.edit_cursor_pos > 0 {
-                            state.edit_buffer[state.edit_line].remove(state.edit_cursor_pos - 1);
-                            state.edit_cursor_pos -= 1;
-                        } else if state.edit_line > 0 {
-                            // At start of line, merge with previous line
-                            let current_content = state.edit_buffer.remove(state.edit_line);
-                            state.edit_line -= 1;
-                            state.edit_cursor_pos = state.edit_buffer[state.edit_line].len();
-                            state.edit_buffer[state.edit_line].push_str(&current_content);
-                        }
-                    }
-                    KeyEvent {
-                        code: KeyCode::Delete,
-                        ..
-                    } => {
-                        if state.edit_cursor_pos < state.edit_buffer[state.edit_line].len() {
-                            state.edit_buffer[state.edit_line].remove(state.edit_cursor_pos);
-                        } else if state.edit_line < state.edit_buffer.len() - 1 {
-                            // At end of line, merge with next line
-                            let next_content = state.edit_buffer.remove(state.edit_line + 1);
-                            state.edit_buffer[state.edit_line].push_str(&next_content);
-                        }
-                    }
-                    KeyEvent {
-                        code: KeyCode::Left,
-                        ..
-                    } => {
-                        if state.edit_cursor_pos > 0 {
-                            state.edit_cursor_pos -= 1;
-                        } else if state.edit_line > 0 {
-                            // Move to end of previous line
-                            state.edit_line -= 1;
-                            state.edit_cursor_pos = state.edit_buffer[state.edit_line].len();
-                        }
-                    }
-                    KeyEvent {
-                        code: KeyCode::Right,
-                        ..
-                    } => {
-                        if state.edit_cursor_pos < state.edit_buffer[state.edit_line].len() {
-                            state.edit_cursor_pos += 1;
-                        } else if state.edit_line < state.edit_buffer.len() - 1 {
-                            // Move to start of next line
+                            state.edit_buffer[state.edit_line].truncate(state.edit_cursor_pos);
+                            state.edit_buffer.insert(state.edit_line + 1, rest_of_line);
                             state.edit_line += 1;
                             state.edit_cursor_pos = 0;
                         }
-                    }
-                    KeyEvent {
-                        code: KeyCode::Up, ..
-                    } => {
-                        if state.edit_line > 0 {
-                            state.edit_line -= 1;
-                            state.edit_cursor_pos = state
-                                .edit_cursor_pos
-                                .min(state.edit_buffer[state.edit_line].len());
+                        KeyEvent {
+                            code: KeyCode::Char('w'),
+                            modifiers,
+                            ..
+                        } if modifiers.contains(KeyModifiers::CONTROL) => {
+                            // Save with Ctrl+w
+                            if let Err(e) = state.save_edited_snippet() {
+                                return Err(e);
+                            }
+                            should_refresh = true;
                         }
-                    }
-                    KeyEvent {
-                        code: KeyCode::Down,
-                        ..
-                    } => {
-                        if state.edit_line < state.edit_buffer.len() - 1 {
-                            state.edit_line += 1;
-                            state.edit_cursor_pos = state
-                                .edit_cursor_pos
-                                .min(state.edit_buffer[state.edit_line].len());
-                        }
-                    }
-                    KeyEvent {
-                        code: KeyCode::Home,
-                        ..
-                    } => {
-                        state.edit_cursor_pos = 0;
-                    }
-                    KeyEvent {
-                        code: KeyCode::End, ..
-                    } => {
-                        state.edit_cursor_pos = state.edit_buffer[state.edit_line].len();
-                    }
-                    KeyEvent {
-                        code: KeyCode::Tab, ..
-                    } => {
-                        // Insert 4 spaces for indentation
-                        for _ in 0..4 {
-                            state.edit_buffer[state.edit_line].insert(state.edit_cursor_pos, ' ');
+                        KeyEvent {
+                            code: KeyCode::Char(c),
+                            ..
+                        } => {
+                            state.edit_buffer[state.edit_line].insert(state.edit_cursor_pos, c);
                             state.edit_cursor_pos += 1;
                         }
-                    }
-                    _ => {}
-                },
-                InputMode::Confirming => match key {
-                    KeyEvent {
-                        code: KeyCode::Char('y'),
-                        ..
-                    } => {
-                        // Handle confirmation
-                        if let Some(ConfirmAction::Delete) = state.confirm_action {
-                            if let Some(actual_index) = state.get_selected_entry_index() {
-                                let shortcut = state.entries[actual_index].shortcut.clone();
-                                if let Err(e) = delete_snippet(&shortcut) {
-                                    return Err(e);
-                                }
-
-                                // Reload entries and update state safely
-                                match load_snippets() {
-                                    Ok(entries) => {
-                                        state.update_entries(entries);
-                                    }
-                                    Err(e) => return Err(e),
-                                }
+                        KeyEvent {
+                            code: KeyCode::Backspace,
+                            ..
+                        } => {
+                            if state.edit_cursor_pos > 0 {
+                                state.edit_buffer[state.edit_line]
+                                    .remove(state.edit_cursor_pos - 1);
+                                state.edit_cursor_pos -= 1;
+                            } else if state.edit_line > 0 {
+                                // At start of line, merge with previous line
+                                let current_content = state.edit_buffer.remove(state.edit_line);
+                                state.edit_line -= 1;
+                                state.edit_cursor_pos = state.edit_buffer[state.edit_line].len();
+                                state.edit_buffer[state.edit_line].push_str(&current_content);
                             }
                         }
-                        state.input_mode = InputMode::Normal;
-                        state.confirm_action = None;
-                    }
-                    KeyEvent {
-                        code: KeyCode::Char('n'),
-                        ..
-                    }
-                    | KeyEvent {
-                        code: KeyCode::Esc, ..
-                    } => {
-                        // Cancel confirmation
-                        state.input_mode = InputMode::Normal;
-                        state.confirm_action = None;
-                    }
-                    _ => {}
-                },
+                        KeyEvent {
+                            code: KeyCode::Delete,
+                            ..
+                        } => {
+                            if state.edit_cursor_pos < state.edit_buffer[state.edit_line].len() {
+                                state.edit_buffer[state.edit_line].remove(state.edit_cursor_pos);
+                            } else if state.edit_line < state.edit_buffer.len() - 1 {
+                                // At end of line, merge with next line
+                                let next_content = state.edit_buffer.remove(state.edit_line + 1);
+                                state.edit_buffer[state.edit_line].push_str(&next_content);
+                            }
+                        }
+                        KeyEvent {
+                            code: KeyCode::Left,
+                            ..
+                        } => {
+                            if state.edit_cursor_pos > 0 {
+                                state.edit_cursor_pos -= 1;
+                            } else if state.edit_line > 0 {
+                                // Move to end of previous line
+                                state.edit_line -= 1;
+                                state.edit_cursor_pos = state.edit_buffer[state.edit_line].len();
+                            }
+                        }
+                        KeyEvent {
+                            code: KeyCode::Right,
+                            ..
+                        } => {
+                            if state.edit_cursor_pos < state.edit_buffer[state.edit_line].len() {
+                                state.edit_cursor_pos += 1;
+                            } else if state.edit_line < state.edit_buffer.len() - 1 {
+                                // Move to start of next line
+                                state.edit_line += 1;
+                                state.edit_cursor_pos = 0;
+                            }
+                        }
+                        KeyEvent {
+                            code: KeyCode::Up, ..
+                        } => {
+                            if state.edit_line > 0 {
+                                state.edit_line -= 1;
+                                state.edit_cursor_pos = state
+                                    .edit_cursor_pos
+                                    .min(state.edit_buffer[state.edit_line].len());
+                            }
+                        }
+                        KeyEvent {
+                            code: KeyCode::Down,
+                            ..
+                        } => {
+                            if state.edit_line < state.edit_buffer.len() - 1 {
+                                state.edit_line += 1;
+                                state.edit_cursor_pos = state
+                                    .edit_cursor_pos
+                                    .min(state.edit_buffer[state.edit_line].len());
+                            }
+                        }
+                        KeyEvent {
+                            code: KeyCode::Home,
+                            ..
+                        } => {
+                            state.edit_cursor_pos = 0;
+                        }
+                        KeyEvent {
+                            code: KeyCode::End, ..
+                        } => {
+                            state.edit_cursor_pos = state.edit_buffer[state.edit_line].len();
+                        }
+                        KeyEvent {
+                            code: KeyCode::Tab, ..
+                        } => {
+                            // Insert 4 spaces for indentation
+                            for _ in 0..4 {
+                                state.edit_buffer[state.edit_line]
+                                    .insert(state.edit_cursor_pos, ' ');
+                                state.edit_cursor_pos += 1;
+                            }
+                        }
+                        _ => {}
+                    },
+                    InputMode::Confirming => match key {
+                        KeyEvent {
+                            code: KeyCode::Char('y'),
+                            ..
+                        } => {
+                            // Handle confirmation
+                            if let Some(ConfirmAction::Delete) = state.confirm_action {
+                                if let Some(actual_index) = state.get_selected_entry_index() {
+                                    let shortcut = state.entries[actual_index].shortcut.clone();
+                                    if let Err(e) = delete_snippet(&shortcut) {
+                                        return Err(e);
+                                    }
+
+                                    // Reload entries and update state safely
+                                    match load_snippets() {
+                                        Ok(entries) => {
+                                            state.update_entries(entries);
+                                        }
+                                        Err(e) => return Err(e),
+                                    }
+                                }
+                            }
+                            state.input_mode = InputMode::Normal;
+                            state.confirm_action = None;
+                        }
+                        KeyEvent {
+                            code: KeyCode::Char('n'),
+                            ..
+                        }
+                        | KeyEvent {
+                            code: KeyCode::Esc, ..
+                        } => {
+                            // Cancel confirmation
+                            state.input_mode = InputMode::Normal;
+                            state.confirm_action = None;
+                        }
+                        _ => {}
+                    },
+                }
             }
         }
     }
 }
 
 fn handle_list_input(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut AppState,
     clipboard: &mut Clipboard,
     key: KeyEvent,
@@ -1081,8 +1132,34 @@ fn handle_list_input(
         } => {
             if let Some(actual_index) = state.get_selected_entry_index() {
                 let content = &state.entries[actual_index].snippet;
-                if let Err(e) = clipboard.set_text(content.to_owned()) {
-                    return Err(ScribeError::Clipboard(e.to_string()));
+
+                // Break long text into chunks to avoid clipboard issues
+                match clipboard.set_text(content.to_owned()) {
+                    Ok(_) => {
+                        // Show a quick success message
+                        terminal.draw(|f| {
+                            let size = f.size();
+                            let message = Paragraph::new("Copied to clipboard")
+                                .style(Style::default().fg(Color::Green))
+                                .alignment(Alignment::Center);
+
+                            f.render_widget(
+                                message,
+                                Rect {
+                                    x: size.width / 2 - 10,
+                                    y: size.height - 2,
+                                    width: 20,
+                                    height: 1,
+                                },
+                            );
+                        })?;
+                        thread::sleep(Duration::from_millis(500));
+                    }
+                    Err(e) => {
+                        // Handle the clipboard error gracefully
+                        let error_msg = format!("Clipboard error: {}", e);
+                        show_message(terminal, &error_msg, Color::Red, 2000)?;
+                    }
                 }
             }
         }

@@ -35,6 +35,14 @@ pub fn save_snippets(snippets: &[SnippetEntry]) -> Result<()> {
 
 /// Add a new snippet
 pub fn add_snippet(shortcut: String, snippet: String) -> Result<()> {
+    // Check for excessively large snippets
+    if snippet.len() > 1_000_000 {
+        // 1MB limit
+        return Err(ScribeError::Other(
+            "Snippet is too large. Maximum size is 1MB.".to_string(),
+        ));
+    }
+
     let mut snippets = match load_snippets() {
         Ok(s) => s,
         Err(ScribeError::DatabaseNotFound(_)) => vec![],

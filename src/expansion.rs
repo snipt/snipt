@@ -29,6 +29,9 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
 }
 
 pub fn type_text_with_formatting(keyboard: &mut impl Keyboard, text: &str) -> Result<()> {
+    // Set a reasonable chunk size to avoid overwhelming the keyboard buffer
+    const CHUNK_SIZE: usize = 512;
+
     // Split into lines and type each line with proper newlines
     for (i, line) in text.split('\n').enumerate() {
         if i > 0 {
@@ -44,21 +47,35 @@ pub fn type_text_with_formatting(keyboard: &mut impl Keyboard, text: &str) -> Re
             }
 
             // Small delay after newline to ensure it registers properly
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(15));
         }
 
-        // Type the line content
-        if !line.is_empty() {
+        // If line is very long, split it into manageable chunks
+        if line.len() > CHUNK_SIZE {
+            for chunk in line.chars().collect::<Vec<_>>().chunks(CHUNK_SIZE) {
+                let chunk_str: String = chunk.iter().collect();
+                match keyboard.text(&chunk_str) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        return Err(ScribeError::Enigo(format!("Failed to type text: {}", err)))
+                    }
+                }
+
+                // Small delay between chunks
+                thread::sleep(Duration::from_millis(20));
+            }
+        } else if !line.is_empty() {
+            // Type the line content directly if it's short
             match keyboard.text(line) {
                 Ok(_) => {}
                 Err(err) => {
                     return Err(ScribeError::Enigo(format!("Failed to type text: {}", err)))
                 }
             }
-
-            // Small delay after each line for reliability
-            thread::sleep(Duration::from_millis(5));
         }
+
+        // Small delay after each line for reliability
+        thread::sleep(Duration::from_millis(10));
     }
 
     Ok(())
