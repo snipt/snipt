@@ -14,10 +14,10 @@ pub mod storage;
 pub mod ui;
 
 // Re-export
-pub use config::{get_config_dir, SPECIAL_CHAR};
+pub use config::{get_config_dir, is_daemon_running, SPECIAL_CHAR};
 pub use daemon::{daemon_status, run_daemon_worker, start_daemon, stop_daemon};
 pub use error::{Result, ScribeError};
-pub use interactive::interactive_add; // Add this line
+pub use interactive::interactive_add;
 pub use models::SnippetEntry;
 pub use storage::{add_snippet, delete_snippet, load_snippets, update_snippet};
-pub use ui::display_snippet_manager;
+pub use ui::{display_scribe_dashboard, display_snippet_manager};

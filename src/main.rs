@@ -1,8 +1,9 @@
 use clap::{Parser, Subcommand};
+use scribe::display_scribe_dashboard;
 use scribe::interactive_add;
 use scribe::{
-    add_snippet, daemon_status, delete_snippet, display_snippet_manager, run_daemon_worker,
-    start_daemon, stop_daemon, update_snippet,
+    add_snippet, daemon_status, delete_snippet, display_snippet_manager, is_daemon_running,
+    run_daemon_worker, start_daemon, stop_daemon, update_snippet,
 };
 use std::env;
 use std::process;
@@ -83,8 +84,8 @@ fn main() {
         Some(Commands::New) => interactive_add(),
         Some(Commands::List) => display_snippet_manager(),
         None => {
-            println!("Use --help for usage information");
-            Ok(())
+            // When no command is provided, launch the main UI
+            display_main_ui()
         }
     };
 
@@ -92,4 +93,12 @@ fn main() {
         eprintln!("Error: {}", e);
         process::exit(1);
     }
+}
+
+fn display_main_ui() -> scribe::Result<()> {
+    // First check if daemon is running
+    let daemon_status = is_daemon_running()?;
+
+    // Now launch the UI with the daemon status information
+    display_scribe_dashboard(daemon_status)
 }

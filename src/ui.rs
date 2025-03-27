@@ -1,6 +1,11 @@
+use crate::config::is_daemon_running;
 use crate::error::{Result, ScribeError};
+use crate::interactive_add;
 use crate::models::SnippetEntry;
+use crate::start_daemon;
+use crate::stop_daemon;
 use crate::storage::{delete_snippet, load_snippets, update_snippet};
+use crossterm::style::Stylize;
 
 use arboard::Clipboard;
 use crossterm::{
@@ -17,6 +22,257 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io::{self, stdout};
+
+/// Display the main Scribe dashboard UI
+pub fn display_scribe_dashboard(daemon_status: Option<u32>) -> Result<()> {
+    enable_raw_mode()?;
+    execute!(stdout(), EnterAlternateScreen)?;
+
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+
+    // Create dashboard state
+    let mut dashboard_state = DashboardState {
+        daemon_status,
+        selected_action: 0,
+        exiting: false,
+    };
+
+    let result = run_dashboard(&mut terminal, &mut dashboard_state);
+
+    // Clean up terminal
+    disable_raw_mode()?;
+    execute!(stdout(), LeaveAlternateScreen)?;
+
+    result
+}
+
+struct DashboardState {
+    daemon_status: Option<u32>,
+    selected_action: usize,
+    exiting: bool,
+}
+
+fn run_dashboard(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    state: &mut DashboardState,
+) -> Result<()> {
+    // List of available actions
+    let actions = vec![
+        "Manage Snippets",
+        "Add New Snippet",
+        "Start Daemon",
+        "Stop Daemon",
+        "Exit",
+    ];
+
+    loop {
+        terminal.draw(|f| {
+            let size = f.size();
+
+            // Create main layout
+            let main_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Title area
+                    Constraint::Length(3), // Status area
+                    Constraint::Min(10),   // Actions area
+                    Constraint::Length(1), // Help text
+                ])
+                .split(size);
+
+            // Draw title
+            let title = Paragraph::new("Scribe - Text Expansion Tool")
+                .style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .alignment(Alignment::Center)
+                .block(Block::default().borders(Borders::ALL));
+            f.render_widget(title, main_chunks[0]);
+
+            // Draw daemon status
+            let status_text = match state.daemon_status {
+                Some(pid) => {
+                    vec![
+                        Span::styled("Status: ", Style::default().fg(Color::White)),
+                        Span::styled("● ", Style::default().fg(Color::Green)), // Green dot
+                        Span::styled("ONLINE", Style::default().fg(Color::Green)),
+                        Span::styled(
+                            format!(" (PID: {})", pid),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]
+                }
+                None => {
+                    vec![
+                        Span::styled("Status: ", Style::default().fg(Color::White)),
+                        Span::styled("● ", Style::default().fg(Color::Red)), // Red dot
+                        Span::styled("OFFLINE", Style::default().fg(Color::Red)),
+                    ]
+                }
+            };
+
+            let status = Paragraph::new(Line::from(status_text))
+                .style(Style::default())
+                .alignment(Alignment::Center)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(" Daemon Status "),
+                );
+            f.render_widget(status, main_chunks[1]);
+
+            // Draw actions
+            let action_items: Vec<ListItem> = actions
+                .iter()
+                .enumerate()
+                .map(|(i, &action)| {
+                    let content = Line::from(vec![
+                        if i == state.selected_action {
+                            Span::styled("> ", Style::default().fg(Color::Yellow))
+                        } else {
+                            Span::raw("  ")
+                        },
+                        Span::styled(action, Style::default().fg(Color::White)),
+                    ]);
+
+                    ListItem::new(content)
+                })
+                .collect();
+
+            let actions_list = List::new(action_items)
+                .block(Block::default().borders(Borders::ALL).title(" Actions "))
+                .highlight_style(Style::default().add_modifier(Modifier::BOLD))
+                .highlight_symbol("> ");
+
+            f.render_widget(actions_list, main_chunks[2]);
+
+            // Draw help text
+            let help_text = "↑/↓: Navigate | Enter: Select | q: Quit";
+            let help = Paragraph::new(help_text)
+                .style(Style::default().fg(Color::DarkGray))
+                .alignment(Alignment::Center);
+            f.render_widget(help, main_chunks[3]);
+        })?;
+
+        // Handle input
+        if let Event::Key(key) = event::read()? {
+            match key.code {
+                KeyCode::Up => {
+                    if state.selected_action > 0 {
+                        state.selected_action -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if state.selected_action < actions.len() - 1 {
+                        state.selected_action += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    match state.selected_action {
+                        0 => {
+                            // Manage Snippets
+                            if let Err(e) = display_snippet_manager() {
+                                return Err(e);
+                            }
+                            // Check if daemon status changed while in the manager
+                            state.daemon_status = is_daemon_running()?;
+                        }
+                        1 => {
+                            // Add New Snippet
+                            if let Err(e) = interactive_add() {
+                                return Err(e);
+                            }
+                        }
+                        2 => {
+                            // Start Daemon
+                            if state.daemon_status.is_none() {
+                                if let Err(e) = start_daemon() {
+                                    // Show error message but don't exit
+                                    terminal.draw(|f| {
+                                        let size = f.size();
+                                        let error_msg = format!("Error starting daemon: {}", e);
+                                        let error = Paragraph::new(error_msg)
+                                            .style(Style::default().fg(Color::Red))
+                                            .block(Block::default().borders(Borders::ALL))
+                                            .alignment(Alignment::Center);
+
+                                        let area = centered_rect(60, 20, size);
+                                        f.render_widget(Clear, area);
+                                        f.render_widget(error, area);
+                                    })?;
+                                    // Wait for user to acknowledge
+                                    event::read()?;
+                                }
+                                // Update status
+                                state.daemon_status = is_daemon_running()?;
+                            }
+                        }
+                        3 => {
+                            // Stop Daemon
+                            if state.daemon_status.is_some() {
+                                if let Err(e) = stop_daemon() {
+                                    // Show error message
+                                    terminal.draw(|f| {
+                                        let size = f.size();
+                                        let error_msg = format!("Error stopping daemon: {}", e);
+                                        let error = Paragraph::new(error_msg)
+                                            .style(Style::default().fg(Color::Red))
+                                            .block(Block::default().borders(Borders::ALL))
+                                            .alignment(Alignment::Center);
+
+                                        let area = centered_rect(60, 20, size);
+                                        f.render_widget(Clear, area);
+                                        f.render_widget(error, area);
+                                    })?;
+                                    // Wait for user to acknowledge
+                                    event::read()?;
+                                }
+                                // Update status
+                                state.daemon_status = is_daemon_running()?;
+                            }
+                        }
+                        4 => {
+                            // Exit
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+                KeyCode::Char('q') => {
+                    return Ok(());
+                }
+                KeyCode::Esc => {
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// Helper function to create a centered rect
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
 
 #[derive(PartialEq)]
 enum InputMode {
