@@ -2,11 +2,7 @@ use crate::config::is_daemon_running;
 use crate::error::{Result, ScribeError};
 use crate::interactive_add;
 use crate::models::SnippetEntry;
-use crate::start_daemon;
-use crate::stop_daemon;
 use crate::storage::{delete_snippet, load_snippets, update_snippet};
-use crossterm::style::Stylize;
-
 use arboard::Clipboard;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -22,6 +18,8 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::io::{self, stdout};
+use std::thread;
+use std::time::Duration;
 
 /// Display the main Scribe dashboard UI
 pub fn display_scribe_dashboard(daemon_status: Option<u32>) -> Result<()> {
@@ -66,7 +64,11 @@ fn run_dashboard(
         "Exit",
     ];
 
-    loop {
+    // Initial draw to prevent flickering on first render
+    terminal.draw(|_| {})?;
+
+    while !state.exiting {
+        // Only draw when needed, not on every loop iteration
         terminal.draw(|f| {
             let size = f.size();
 
@@ -157,100 +159,288 @@ fn run_dashboard(
             f.render_widget(help, main_chunks[3]);
         })?;
 
-        // Handle input
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Up => {
-                    if state.selected_action > 0 {
-                        state.selected_action -= 1;
-                    }
-                }
-                KeyCode::Down => {
-                    if state.selected_action < actions.len() - 1 {
-                        state.selected_action += 1;
-                    }
-                }
-                KeyCode::Enter => {
-                    match state.selected_action {
-                        0 => {
-                            // Manage Snippets
-                            if let Err(e) = display_snippet_manager() {
-                                return Err(e);
-                            }
-                            // Check if daemon status changed while in the manager
-                            state.daemon_status = is_daemon_running()?;
+        // Handle input with a timeout to prevent excessive CPU usage
+        if crossterm::event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Up => {
+                        if state.selected_action > 0 {
+                            state.selected_action -= 1;
                         }
-                        1 => {
-                            // Add New Snippet
-                            if let Err(e) = interactive_add() {
-                                return Err(e);
-                            }
+                    }
+                    KeyCode::Down => {
+                        if state.selected_action < actions.len() - 1 {
+                            state.selected_action += 1;
                         }
-                        2 => {
-                            // Start Daemon
-                            if state.daemon_status.is_none() {
-                                if let Err(e) = start_daemon() {
-                                    // Show error message but don't exit
-                                    terminal.draw(|f| {
-                                        let size = f.size();
-                                        let error_msg = format!("Error starting daemon: {}", e);
-                                        let error = Paragraph::new(error_msg)
-                                            .style(Style::default().fg(Color::Red))
-                                            .block(Block::default().borders(Borders::ALL))
-                                            .alignment(Alignment::Center);
+                    }
+                    KeyCode::Enter => {
+                        match state.selected_action {
+                            0 => {
+                                // Manage Snippets - Clean approach
+                                // First exit TUI mode properly
+                                disable_raw_mode()?;
+                                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-                                        let area = centered_rect(60, 20, size);
-                                        f.render_widget(Clear, area);
-                                        f.render_widget(error, area);
-                                    })?;
-                                    // Wait for user to acknowledge
-                                    event::read()?;
+                                // Run the snippet manager in normal terminal mode
+                                let result = display_snippet_manager();
+
+                                // Regardless of result, restore our TUI
+                                enable_raw_mode()?;
+                                execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                                terminal.clear()?;
+
+                                // If there was an error, show it briefly
+                                if let Err(e) = result {
+                                    show_message(
+                                        terminal,
+                                        &format!("Error: {}", e),
+                                        Color::Red,
+                                        2000,
+                                    )?;
                                 }
-                                // Update status
+
+                                // Update daemon status
                                 state.daemon_status = is_daemon_running()?;
                             }
-                        }
-                        3 => {
-                            // Stop Daemon
-                            if state.daemon_status.is_some() {
-                                if let Err(e) = stop_daemon() {
-                                    // Show error message
-                                    terminal.draw(|f| {
-                                        let size = f.size();
-                                        let error_msg = format!("Error stopping daemon: {}", e);
-                                        let error = Paragraph::new(error_msg)
-                                            .style(Style::default().fg(Color::Red))
-                                            .block(Block::default().borders(Borders::ALL))
-                                            .alignment(Alignment::Center);
+                            1 => {
+                                // Add New Snippet - Clean approach
+                                disable_raw_mode()?;
+                                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-                                        let area = centered_rect(60, 20, size);
-                                        f.render_widget(Clear, area);
-                                        f.render_widget(error, area);
-                                    })?;
-                                    // Wait for user to acknowledge
-                                    event::read()?;
+                                // Run the interactive add function
+                                let result = interactive_add();
+
+                                // Restore TUI
+                                enable_raw_mode()?;
+                                execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                                terminal.clear()?;
+
+                                // Show error if needed
+                                if let Err(e) = result {
+                                    show_message(
+                                        terminal,
+                                        &format!("Error: {}", e),
+                                        Color::Red,
+                                        2000,
+                                    )?;
                                 }
-                                // Update status
-                                state.daemon_status = is_daemon_running()?;
                             }
+                            2 => {
+                                // Start Daemon
+                                if state.daemon_status.is_none() {
+                                    // Show starting message within the UI
+                                    show_message(
+                                        terminal,
+                                        "Starting daemon process...",
+                                        Color::Yellow,
+                                        500,
+                                    )?;
+
+                                    // We'll need to temporarily disable raw mode but remember we're in a UI
+                                    disable_raw_mode()?;
+
+                                    // Start daemon using a separate process that won't detach our terminal
+                                    let output =
+                                        std::process::Command::new(std::env::current_exe()?)
+                                            .arg("start")
+                                            .output();
+
+                                    // Re-enable raw mode for our UI
+                                    enable_raw_mode()?;
+
+                                    // Process the result
+                                    match output {
+                                        Ok(output) => {
+                                            // Give the daemon a moment to start
+                                            thread::sleep(Duration::from_millis(1000));
+
+                                            // Check if daemon is actually running
+                                            let is_running = is_daemon_running()?;
+                                            if is_running.is_some() {
+                                                show_message(
+                                                    terminal,
+                                                    "Daemon started successfully",
+                                                    Color::Green,
+                                                    1000,
+                                                )?;
+                                                state.daemon_status = is_running;
+                                            } else {
+                                                // Something went wrong - show the error output
+                                                let stderr =
+                                                    String::from_utf8_lossy(&output.stderr);
+                                                let error_msg = if !stderr.is_empty() {
+                                                    format!("Daemon failed to start: {}", stderr)
+                                                } else {
+                                                    "Daemon failed to start for unknown reason"
+                                                        .to_string()
+                                                };
+
+                                                show_message(
+                                                    terminal,
+                                                    &error_msg,
+                                                    Color::Red,
+                                                    2000,
+                                                )?;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            show_message(
+                                                terminal,
+                                                &format!("Failed to start daemon process: {}", e),
+                                                Color::Red,
+                                                2000,
+                                            )?;
+                                        }
+                                    }
+                                } else {
+                                    // Show "already running" message
+                                    show_message(
+                                        terminal,
+                                        "Daemon is already running",
+                                        Color::Yellow,
+                                        1000,
+                                    )?;
+                                }
+                            }
+
+                            // For the Stop Daemon action (case 3):
+                            3 => {
+                                // Stop Daemon
+                                if state.daemon_status.is_some() {
+                                    // Show stopping message
+                                    show_message(
+                                        terminal,
+                                        "Stopping daemon process...",
+                                        Color::Yellow,
+                                        500,
+                                    )?;
+
+                                    // Run the stop command as a separate process
+                                    disable_raw_mode()?;
+
+                                    let output =
+                                        std::process::Command::new(std::env::current_exe()?)
+                                            .arg("stop")
+                                            .output();
+
+                                    enable_raw_mode()?;
+
+                                    // Process the result
+                                    match output {
+                                        Ok(_) => {
+                                            // Give the daemon a moment to stop
+                                            thread::sleep(Duration::from_millis(500));
+
+                                            // Verify that daemon is actually stopped
+                                            let is_running = is_daemon_running()?;
+                                            if is_running.is_none() {
+                                                show_message(
+                                                    terminal,
+                                                    "Daemon stopped successfully",
+                                                    Color::Green,
+                                                    1000,
+                                                )?;
+                                                state.daemon_status = None;
+                                            } else {
+                                                show_message(
+                                                    terminal,
+                                                    "Failed to stop daemon - process is still running",
+                                                    Color::Red,
+                                                    2000
+                                                )?;
+                                                state.daemon_status = is_running;
+                                                // Update with actual status
+                                            }
+                                        }
+                                        Err(e) => {
+                                            show_message(
+                                                terminal,
+                                                &format!("Failed to stop daemon process: {}", e),
+                                                Color::Red,
+                                                2000,
+                                            )?;
+                                        }
+                                    }
+                                } else {
+                                    // Show "not running" message
+                                    show_message(
+                                        terminal,
+                                        "Daemon is not running",
+                                        Color::Yellow,
+                                        1000,
+                                    )?;
+                                }
+                            }
+                            4 => {
+                                // Exit
+                                state.exiting = true;
+                            }
+                            _ => {}
                         }
-                        4 => {
-                            // Exit
-                            return Ok(());
-                        }
-                        _ => {}
                     }
+                    KeyCode::Char('q') => {
+                        state.exiting = true;
+                    }
+                    KeyCode::Esc => {
+                        state.exiting = true;
+                    }
+                    _ => {}
                 }
-                KeyCode::Char('q') => {
-                    return Ok(());
-                }
-                KeyCode::Esc => {
-                    return Ok(());
-                }
-                _ => {}
             }
         }
     }
+
+    Ok(())
+}
+
+// Helper function to show messages in a popup
+fn show_message<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    message: &str,
+    color: Color,
+    duration_ms: u64,
+) -> Result<()> {
+    // Draw the message
+    terminal.draw(|f| {
+        let size = f.size();
+        let area = centered_rect(60, 10, size);
+
+        // Clear the area behind the popup
+        f.render_widget(Clear, area);
+
+        // Create the message box - add instructions if it's a wait
+        let message_text = if duration_ms == 0 {
+            format!("{}\n\nPress any key to continue...", message)
+        } else {
+            message.to_string()
+        };
+
+        let message_box = Paragraph::new(message_text)
+            .style(Style::default().fg(color))
+            .block(Block::default().borders(Borders::ALL).title(" Scribe "))
+            .alignment(Alignment::Center);
+
+        f.render_widget(message_box, area);
+    })?;
+
+    // If duration is specified, wait that long
+    if duration_ms > 0 {
+        // Sleep but still be interruptible by key press
+        for _ in 0..duration_ms / 100 {
+            thread::sleep(Duration::from_millis(100));
+            if crossterm::event::poll(Duration::from_millis(0))? {
+                let _ = crossterm::event::read()?;
+                break;
+            }
+        }
+    } else {
+        // Wait for a key press to dismiss with a timeout
+        if crossterm::event::poll(Duration::from_secs(30))? {
+            let _ = crossterm::event::read()?;
+        }
+    }
+
+    Ok(())
 }
 
 // Helper function to create a centered rect
