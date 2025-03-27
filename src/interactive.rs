@@ -280,6 +280,37 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<()> {
                                         current_line += 1;
                                         cursor_pos = 0;
                                     }
+                                    KeyCode::Char('w')
+                                        if modifiers.contains(KeyModifiers::CONTROL) =>
+                                    {
+                                        // Save and exit on Ctrl+w
+                                        if !shortcut.is_empty()
+                                            && !snippet.is_empty()
+                                            && !snippet[0].is_empty()
+                                        {
+                                            // Join the lines with newlines
+                                            let full_snippet = snippet.join("\n");
+                                            match add_snippet(shortcut.clone(), full_snippet) {
+                                                Ok(_) => {
+                                                    show_success_message(stdout)?;
+                                                    return Ok(());
+                                                }
+                                                Err(ScribeError::Other(msg))
+                                                    if msg.contains("already exists") =>
+                                                {
+                                                    show_error_message(stdout, &msg)?;
+                                                    thread_sleep(1500);
+                                                }
+                                                Err(e) => return Err(e),
+                                            }
+                                        } else {
+                                            show_error_message(
+                                                stdout,
+                                                "Both fields must be filled",
+                                            )?;
+                                            thread_sleep(1500);
+                                        }
+                                    }
                                     KeyCode::Backspace => {
                                         // Delete character before cursor
                                         if cursor_pos > 0 {
@@ -426,15 +457,15 @@ fn draw_ui(
 
     // Draw help text
     let normal_help =
-        "i/a: Insert | o/O: New line | h/j/k/l: Navigate | Ctrl+d: Delete line | Enter: Submit";
-    let insert_help = "Esc: Normal mode | Enter: New line | Tab: Indent | Arrows: Navigate";
+        "i/a: Insert | o/O: New line | h/j/k/l: Navigate | Ctrl+d: Delete line | Ctrl + w: Submit";
+    let insert_help = "Esc: Cancel | Enter: New line | Arrows: Navigate | Ctrl + w: Submit";
     let help_text = if current_field == 1 {
         match editor_mode {
             EditorMode::Normal => normal_help,
             EditorMode::Insert => insert_help,
         }
     } else {
-        "Tab: Next field | Enter: Submit | Esc: Cancel"
+        "Tab: Next field | Esc: Cancel"
     };
     let help_x = start_x + (panel_width - help_text.len() as u16) / 2;
     execute!(
@@ -708,8 +739,8 @@ fn draw_multiline_field(
     execute!(
         stdout,
         cursor::MoveTo(x, y + 3 + height),
-        SetForegroundColor(Color::DarkGrey),
-        Print("Enter: New line | ↑/↓: Navigate lines | Ctrl+Enter: Submit"),
+        SetForegroundColor(Color::Blue),
+        Print("─".repeat((width - 2) as usize)),
         ResetColor
     )?;
 
