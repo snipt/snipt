@@ -105,10 +105,7 @@ fn main() {
 
             match interactive_result {
                 AddResult::Added => {
-                    println!("✨ Snippet added successfully!");
-                    println!("Opening snippet manager...");
                     std::thread::sleep(std::time::Duration::from_millis(300));
-
                     // Launch the snippet manager UI
                     if let Err(e) = display_snippet_manager() {
                         eprintln!("Error displaying snippets: {}", e);

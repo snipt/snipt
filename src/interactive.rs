@@ -355,44 +355,57 @@ fn handle_shortcut_input(
         }
         KeyCode::Backspace => {
             if *cursor_pos > 0 {
-                let new_pos = find_prev_char_boundary(shortcut, *cursor_pos)
-                    .unwrap_or(*cursor_pos - 1)
-                    .min(*cursor_pos);
-                shortcut.replace_range(new_pos..*cursor_pos, "");
-                *cursor_pos = new_pos;
+                // Convert to chars for proper UTF-8 handling
+                let mut chars: Vec<char> = shortcut.chars().collect();
+                let cursor_char_pos = (*cursor_pos).min(chars.len());
+
+                if cursor_char_pos > 0 {
+                    // Remove character before cursor
+                    chars.remove(cursor_char_pos - 1);
+                    *shortcut = chars.into_iter().collect();
+                    *cursor_pos -= 1;
+                }
             }
         }
         KeyCode::Delete => {
-            if *cursor_pos < shortcut.len() {
-                let next_pos = find_next_char_boundary(shortcut, *cursor_pos)
-                    .unwrap_or(*cursor_pos + 1)
-                    .min(shortcut.len());
-                shortcut.replace_range(*cursor_pos..next_pos, "");
+            // Convert to chars for proper UTF-8 handling
+            let mut chars: Vec<char> = shortcut.chars().collect();
+            let cursor_char_pos = (*cursor_pos).min(chars.len());
+
+            if cursor_char_pos < chars.len() {
+                // Remove character at cursor
+                chars.remove(cursor_char_pos);
+                *shortcut = chars.into_iter().collect();
             }
         }
         KeyCode::Left => {
             if *cursor_pos > 0 {
-                *cursor_pos = find_prev_char_boundary(shortcut, *cursor_pos)
-                    .unwrap_or(*cursor_pos - 1)
-                    .min(*cursor_pos);
+                *cursor_pos -= 1;
             }
         }
         KeyCode::Right => {
-            if *cursor_pos < shortcut.len() {
-                *cursor_pos = find_next_char_boundary(shortcut, *cursor_pos)
-                    .unwrap_or(*cursor_pos + 1)
-                    .min(shortcut.len());
+            let char_count = shortcut.chars().count();
+            if *cursor_pos < char_count {
+                *cursor_pos += 1;
             }
         }
         KeyCode::Home => {
             *cursor_pos = 0;
         }
         KeyCode::End => {
-            *cursor_pos = shortcut.len();
+            *cursor_pos = shortcut.chars().count(); // Count chars, not bytes
         }
         KeyCode::Char(c) => {
             if shortcut.len() < MAX_SHORTCUT_LENGTH {
-                shortcut.insert(*cursor_pos, c);
+                // Convert to chars for proper UTF-8 handling
+                let mut chars: Vec<char> = shortcut.chars().collect();
+                let cursor_char_pos = (*cursor_pos).min(chars.len());
+
+                // Insert character at cursor position
+                chars.insert(cursor_char_pos, c);
+
+                // Convert back to string
+                *shortcut = chars.into_iter().collect();
                 *cursor_pos += 1;
             }
         }
@@ -530,11 +543,18 @@ fn handle_insert_mode(
         KeyCode::Enter => {
             if snippet.len() < MAX_LINES {
                 // Create a new line by splitting at cursor
-                let current = snippet[*current_line].clone();
-                let (before, after) = current.split_at((*cursor_pos).min(current.len()));
+                let current = &snippet[*current_line];
 
-                snippet[*current_line] = before.to_string();
-                snippet.insert(*current_line + 1, after.to_string());
+                // Convert to char array to handle UTF-8 correctly
+                let chars: Vec<char> = current.chars().collect();
+                let cursor_char_pos = (*cursor_pos).min(chars.len());
+
+                // Split string at character position
+                let before: String = chars[..cursor_char_pos].iter().collect();
+                let after: String = chars[cursor_char_pos..].iter().collect();
+
+                snippet[*current_line] = before;
+                snippet.insert(*current_line + 1, after);
                 *current_line += 1;
                 *cursor_pos = 0;
             }
@@ -547,29 +567,33 @@ fn handle_insert_mode(
         }
         KeyCode::Backspace => {
             if *cursor_pos > 0 {
-                // Safely delete character before cursor
-                let new_pos = find_prev_char_boundary(&snippet[*current_line], *cursor_pos)
-                    .unwrap_or(*cursor_pos - 1)
-                    .min(*cursor_pos);
+                // Convert to chars for proper UTF-8 handling
+                let mut chars: Vec<char> = snippet[*current_line].chars().collect();
+                let cursor_char_pos = (*cursor_pos).min(chars.len());
 
-                snippet[*current_line].replace_range(new_pos..*cursor_pos, "");
-                *cursor_pos = new_pos;
+                if cursor_char_pos > 0 {
+                    // Remove character before cursor
+                    chars.remove(cursor_char_pos - 1);
+                    snippet[*current_line] = chars.into_iter().collect();
+                    *cursor_pos -= 1;
+                }
             } else if *current_line > 0 {
                 // At start of line, merge with previous line
                 let content = snippet.remove(*current_line);
                 *current_line -= 1;
-                *cursor_pos = snippet[*current_line].len();
+                *cursor_pos = snippet[*current_line].chars().count(); // Important: count chars, not bytes
                 snippet[*current_line].push_str(&content);
             }
         }
         KeyCode::Delete => {
-            if *cursor_pos < snippet[*current_line].len() {
-                // Safely delete character at cursor
-                let next_pos = find_next_char_boundary(&snippet[*current_line], *cursor_pos)
-                    .unwrap_or(*cursor_pos + 1)
-                    .min(snippet[*current_line].len());
+            // Convert to chars for proper UTF-8 handling
+            let mut chars: Vec<char> = snippet[*current_line].chars().collect();
+            let cursor_char_pos = (*cursor_pos).min(chars.len());
 
-                snippet[*current_line].replace_range(*cursor_pos..next_pos, "");
+            if cursor_char_pos < chars.len() {
+                // Remove character at cursor
+                chars.remove(cursor_char_pos);
+                snippet[*current_line] = chars.into_iter().collect();
             } else if *current_line < snippet.len() - 1 {
                 // At end of line, merge with next line
                 let next = snippet.remove(*current_line + 1);
@@ -578,20 +602,19 @@ fn handle_insert_mode(
         }
         KeyCode::Left => {
             if *cursor_pos > 0 {
-                *cursor_pos = find_prev_char_boundary(&snippet[*current_line], *cursor_pos)
-                    .unwrap_or(*cursor_pos - 1)
-                    .min(*cursor_pos);
+                *cursor_pos -= 1;
             } else if *current_line > 0 {
+                // Move to end of previous line
                 *current_line -= 1;
-                *cursor_pos = snippet[*current_line].len();
+                *cursor_pos = snippet[*current_line].chars().count(); // Count chars, not bytes
             }
         }
         KeyCode::Right => {
-            if *cursor_pos < snippet[*current_line].len() {
-                *cursor_pos = find_next_char_boundary(&snippet[*current_line], *cursor_pos)
-                    .unwrap_or(*cursor_pos + 1)
-                    .min(snippet[*current_line].len());
+            let char_count = snippet[*current_line].chars().count();
+            if *cursor_pos < char_count {
+                *cursor_pos += 1;
             } else if *current_line < snippet.len() - 1 {
+                // Move to start of next line
                 *current_line += 1;
                 *cursor_pos = 0;
             }
@@ -599,31 +622,51 @@ fn handle_insert_mode(
         KeyCode::Up => {
             if *current_line > 0 {
                 *current_line -= 1;
-                *cursor_pos = (*cursor_pos).min(snippet[*current_line].len());
+                let char_count = snippet[*current_line].chars().count();
+                *cursor_pos = (*cursor_pos).min(char_count);
             }
         }
         KeyCode::Down => {
             if *current_line < snippet.len() - 1 {
                 *current_line += 1;
-                *cursor_pos = (*cursor_pos).min(snippet[*current_line].len());
+                let char_count = snippet[*current_line].chars().count();
+                *cursor_pos = (*cursor_pos).min(char_count);
             }
         }
         KeyCode::Home => {
             *cursor_pos = 0;
         }
         KeyCode::End => {
-            *cursor_pos = snippet[*current_line].len();
+            *cursor_pos = snippet[*current_line].chars().count(); // Count chars, not bytes
         }
         KeyCode::Tab => {
+            // Insert 4 spaces for tab
             if snippet[*current_line].len() < MAX_LINE_LENGTH - 4 {
-                // Insert 4 spaces for tab
-                snippet[*current_line].insert_str(*cursor_pos, "    ");
-                *cursor_pos += 4;
+                for _ in 0..4 {
+                    // Convert to chars
+                    let mut chars: Vec<char> = snippet[*current_line].chars().collect();
+                    let cursor_char_pos = (*cursor_pos).min(chars.len());
+
+                    // Insert space
+                    chars.insert(cursor_char_pos, ' ');
+
+                    // Convert back to string
+                    snippet[*current_line] = chars.into_iter().collect();
+                    *cursor_pos += 1;
+                }
             }
         }
         KeyCode::Char(c) => {
             if snippet[*current_line].len() < MAX_LINE_LENGTH {
-                snippet[*current_line].insert(*cursor_pos, c);
+                // Convert string to chars for proper UTF-8 handling
+                let mut chars: Vec<char> = snippet[*current_line].chars().collect();
+                let cursor_char_pos = (*cursor_pos).min(chars.len());
+
+                // Insert character at cursor position
+                chars.insert(cursor_char_pos, c);
+
+                // Convert back to string
+                snippet[*current_line] = chars.into_iter().collect();
                 *cursor_pos += 1;
             }
         }
@@ -1240,14 +1283,22 @@ fn find_prev_char_boundary(s: &str, pos: usize) -> Option<usize> {
         return None;
     }
 
-    // Start from position and search backward
-    for i in (0..pos).rev() {
-        if s.is_char_boundary(i) {
-            return Some(i);
-        }
+    // Find the previous valid UTF-8 character boundary
+    let mut idx = pos;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
     }
 
-    Some(0) // Return beginning of string if no boundary found
+    // Keep going back to find the actual previous character
+    if idx > 0 {
+        let mut prev_idx = idx - 1;
+        while prev_idx > 0 && !s.is_char_boundary(prev_idx) {
+            prev_idx -= 1;
+        }
+        Some(prev_idx)
+    } else {
+        Some(0)
+    }
 }
 
 // Helper function to find next character boundary
@@ -1256,14 +1307,17 @@ fn find_next_char_boundary(s: &str, pos: usize) -> Option<usize> {
         return None;
     }
 
-    // Start from position and search forward
-    for i in (pos + 1)..=s.len() {
-        if s.is_char_boundary(i) {
-            return Some(i);
-        }
+    // Find the next valid UTF-8 character boundary
+    let mut idx = pos + 1;
+    while idx < s.len() && !s.is_char_boundary(idx) {
+        idx += 1;
     }
 
-    Some(s.len()) // Return end of string if no boundary found
+    if idx <= s.len() {
+        Some(idx)
+    } else {
+        Some(s.len())
+    }
 }
 
 // Safe string truncation that respects UTF-8 boundaries

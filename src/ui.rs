@@ -1340,7 +1340,7 @@ fn render_snippet_details<B: ratatui::backend::Backend>(
         ];
 
         // Split the snippet content by newlines and preserve indentation
-        for line in entry.snippet.split('\n') {
+        for line in entry.snippet.lines() {
             content.push(Line::from(Span::styled(
                 line,
                 Style::default().fg(Color::White),
