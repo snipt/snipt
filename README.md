@@ -1,124 +1,157 @@
+
 # Scribe: Text Snippet Expansion Tool
 
-Scribe is a versatile text snippet expansion tool that lets you define and use text shortcuts across your system. Type a special character followed by your shortcut, and Scribe automatically expands it into your predefined text.
+<div align="center">
 
-## Features
+![Scribe Logo](https://via.placeholder.com/150x150)
 
-- Define custom text snippets with shortcut aliases
-- Background daemon that monitors your typing and expands shortcuts
-- Terminal-based UI for managing snippets
-- Interactive mode for adding new snippets
-- Cross-platform support (Linux, macOS, Windows)
-- Real-time clipboard integration
+**Type less, say more. Text expansion that works everywhere.**
 
-## Installation
+[![GitHub license](https://img.shields.io/github/license/snipt/scribe)](https://github.com/snipt/scribe/blob/main/LICENSE)
+[![Rust Version](https://img.shields.io/badge/rust-1.56+-orange.svg)](https://www.rust-lang.org/)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue.svg)]()
+
+</div>
+
+---
+## 🚀 Overview
+
+Scribe is a powerful text snippet expansion tool that boosts your productivity by replacing short text shortcuts with longer content. Just type a prefix (like `:`) followed by your shortcut, and Scribe automatically expands it into your predefined text.
+
+## ✨ Key Features
+
+- **Custom Text Snippets**: Define shortcut aliases for frequently used text
+- **System-Wide Expansion**: Works in any application where you can type
+- **Modern TUI**: Beautiful terminal interface for managing snippets
+- **Background Daemon**: Silent monitoring of keyboard input for expansion
+- **Cross-Platform**: Works seamlessly on Linux, macOS, and Windows
+- **Clipboard Integration**: Quickly copy expansions to clipboard
+
+## 📦 Installation
 
 ### From Source
 
-1. Ensure you have Rust and Cargo installed. If not, install from [rustup.rs](https://rustup.rs/).
-
-2. Clone the repository and build:
-
 ```bash
+# 1. Install Rust if needed (https://rustup.rs/)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 2. Clone and build Scribe
 git clone https://github.com/bahdotsh/scribe.git
 cd scribe
 cargo build --release
-```
 
-3. Install the binary (optional):
-
-```bash
+# 3. Install the binary (optional)
 cargo install --path .
 ```
 
-## Usage
+## 🎮 Usage
 
-### Basic Commands
+### Starting Scribe
 
 ```bash
-# Start the daemon (must be running for text expansion)
+# Launch interactive UI
+scribe
+
+# Start the daemon (required for expansion)
 scribe start
+```
 
-# Stop the daemon
-scribe stop
+### Managing Snippets
 
-# Check daemon status
-scribe status
-
-# Add a new snippet
+```bash
+# Add a snippet
 scribe add --shortcut hello --snippet "Hello, world!"
 
-# Add a snippet interactively
+# Add interactively
 scribe new
 
-# List all snippets in the terminal UI
+# View and manage all snippets
 scribe list
 
-# Delete a snippet
+# Remove a snippet
 scribe delete --shortcut hello
 
-# Update an existing snippet
+# Update existing snippet
 scribe update --shortcut hello --snippet "Hello there, world!"
 ```
 
-### Using Snippets
-
-Once you've added snippets and started the daemon, you can use them by typing:
-
-```
-:shortcut
-```
-
-For example, `:hello` would expand to "Hello, world!" based on the example above.
-
-## Terminal UI
-
-Scribe includes a terminal-based UI for managing your snippets:
-
-- View all snippets with their shortcuts
-- Search and filter snippets
-- Copy snippets to clipboard
-- Delete snippets
-- View help and usage tips
-
-Launch the UI with:
+### Monitoring & Control
 
 ```bash
-scribe list
+# Check daemon status
+scribe status
+
+# Stop the daemon
+scribe stop
 ```
 
-### UI Navigation
+## 💡 How Expansion Works
 
-- ↑/↓: Navigate through snippets
-- Tab: Switch between tabs
-- Enter: Copy selected snippet to clipboard
-- /: Search snippets
-- Ctrl+D: Delete current snippet
-- Esc/q: Exit
+Once the daemon is running, type your prefix followed by a shortcut anywhere on your system:
 
-## Configuration
+```
+:hello
+```
 
-Scribe stores its configuration and snippet database in the `~/.scribe` directory:
+This instantly expands to "Hello, world!" (or your custom text).
 
-- `scribe.json`: Contains your snippet database
-- `scribe-daemon.pid`: Contains the process ID of the running daemon
+## 🖥️ Terminal User Interface
 
-## Requirements
+<div align="center">
 
-- Rust 1.56 or later
-- Dependencies (automatically managed by Cargo):
-  - rdev (for keyboard event handling)
-  - clap (for command-line parsing)
-  - serde (for JSON serialization)
-  - crossterm (for terminal UI)
-  - ratatui (for terminal UI)
-  - enigo (for keyboard simulation)
-  - arboard (for clipboard access)
+![Scribe TUI Screenshot](https://via.placeholder.com/600x400)
 
-## License
+</div>
+
+Launch the beautiful terminal UI with either `scribe` or `scribe list`.
+
+### Navigation
+
+| Key         | Action                     |
+|-------------|----------------------------|
+| ↑/↓         | Navigate through snippets  |
+| Tab         | Switch between tabs        |
+| Enter       | Copy to clipboard          |
+| /           | Search snippets            |
+| Ctrl+D      | Delete selected snippet    |
+| Esc/q       | Exit                       |
+
+## ⚙️ Configuration
+
+Scribe stores your data in `~/.scribe/`:
+
+- `scribe.json`: Your snippet database
+- `scribe-daemon.pid`: Process ID of running daemon
+
+## 🧩 Architecture
+
+Scribe consists of several components:
+
+- **Core Library**: Handles snippet management and persistence
+- **Daemon**: Background process that listens for keyboard events
+- **CLI**: Command-line interface for controlling Scribe
+- **TUI**: Terminal user interface for snippet management
+- **Server**: HTTP API for potential GUI clients
+
+## 🔨 Requirements
+
+- Rust 1.56+
+- Core dependencies: rdev, clap, serde, crossterm, ratatui, enigo, arboard
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to:
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+## 📜 License
 
 MIT
 
-## Contributing
+---
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+<div align="center">
+  <p>Built with ❤️ using Rust</p>
+</div>
