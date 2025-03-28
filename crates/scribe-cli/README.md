@@ -12,7 +12,6 @@ This crate provides the command-line interface for Scribe, a text snippet expans
 ## CLI Commands
 
 - `scribe`: Launch the interactive TUI where you can manage all snippets and settings
-- `scribe`: Launch the interactive TUI where you can manage all snippets and settings
 - `scribe add`: Add a new text snippet
 - `scribe delete`: Delete a text snippet
 - `scribe update`: Update an existing snippet
