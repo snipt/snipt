@@ -1,4 +1,4 @@
-use crate::error::{Result, ScribeError};
+use crate::error::Result;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -55,32 +55,25 @@ pub fn db_file_exists() -> bool {
 pub fn is_daemon_running() -> Result<Option<u32>> {
     let pid_file = get_pid_file_path();
 
-    if !pid_file.exists() {
-        return Ok(None);
-    }
-
-    let pid_str = fs::read_to_string(&pid_file)?;
-    let pid = pid_str
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| ScribeError::InvalidPid)?;
-
-    #[cfg(unix)]
-    {
-        let status = std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .status();
-
-        if status.is_ok() && status.unwrap().success() {
-            return Ok(Some(pid));
+    if pid_file.exists() {
+        match fs::read_to_string(&pid_file) {
+            Ok(contents) => {
+                match contents.trim().parse::<u32>() {
+                    Ok(pid) => Ok(Some(pid)),
+                    Err(_) => {
+                        // Invalid PID, treat as not running and clean up
+                        let _ = fs::remove_file(&pid_file);
+                        Ok(None)
+                    }
+                }
+            }
+            Err(_) => {
+                // Can't read file, treat as not running and clean up
+                let _ = fs::remove_file(&pid_file);
+                Ok(None)
+            }
         }
-        return Ok(None);
-    }
-
-    // For non-Unix systems, assume it's running if PID file exists
-    #[cfg(not(unix))]
-    {
-        Ok(Some(pid))
+    } else {
+        Ok(None)
     }
 }

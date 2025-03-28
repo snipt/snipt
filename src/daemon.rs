@@ -4,6 +4,7 @@ use crate::config::{
 use crate::error::{Result, ScribeError};
 use crate::expansion::{process_expansion, replace_text};
 use crate::keyboard::rdev_key_to_char;
+use crate::server::{get_api_server_port, port_is_available, save_api_port, stop_api_server};
 use crate::storage::load_snippets;
 
 use rdev::{self, listen, EventType, Key as RdevKey};
@@ -49,55 +50,230 @@ print(result)
 "#;
 
 /// Start the daemon process
-pub fn start_daemon() -> Result<()> {
+pub fn start_daemon(api_port: u16) -> Result<()> {
     // Check if daemon is already running
     if let Some(pid) = is_daemon_running()? {
-        return Err(ScribeError::DaemonAlreadyRunning(pid));
+        if verify_process_running(pid) {
+            println!("Daemon is already running with PID {}.", pid);
+        } else {
+            // PID file exists but process is not running - clean up and restart
+            println!("Found stale PID file. Cleaning up and starting new daemon...");
+            let _ = fs::remove_file(get_pid_file_path());
+            // Continue with starting a new daemon
+        }
     }
 
-    // Ensure config directory exists
-    ensure_config_dir()?;
+    if is_daemon_running()?.is_none() {
+        println!("Starting scribe daemon...");
 
-    // Check if database exists
-    if !db_file_exists() {
-        return Err(ScribeError::DatabaseNotFound(
-            get_db_file_path().to_string_lossy().to_string(),
-        ));
-    }
+        // Ensure config directory exists
+        ensure_config_dir()?;
 
-    // Check and request permissions if needed
-    check_and_request_permissions()?;
+        // Check if database exists
+        if !db_file_exists() {
+            return Err(ScribeError::DatabaseNotFound(
+                get_db_file_path().to_string_lossy().to_string(),
+            ));
+        }
 
-    // Fork to background on Unix systems
-    #[cfg(unix)]
-    {
-        use daemonize::Daemonize;
-        println!("Starting scribe daemon in the background");
+        // Check and request permissions if needed
+        check_and_request_permissions()?;
 
-        let pid_file = get_pid_file_path();
+        #[cfg(unix)]
+        {
+            use std::process::Command;
 
-        // Create a new daemonize process
-        let daemonize = Daemonize::new()
-            .pid_file(&pid_file)
-            .chown_pid_file(true)
-            .working_directory("/tmp")
-            .stdout(File::create("/dev/null")?)
-            .stderr(File::create("/dev/null")?);
+            // Create a new detached process for the daemon
+            // Get the path to the current executable
+            let current_exe = std::env::current_exe()?;
 
-        match daemonize.start() {
-            Ok(_) => run_daemon_worker(), // We're now in the daemon process
-            Err(e) => {
-                let msg = format!("Error starting daemon: {}", e);
-                Err(ScribeError::Other(msg))
+            // Start the daemon process detached with nohup
+            let daemon_log_file = format!(
+                "{}/daemon_log.txt",
+                crate::config::get_config_dir().to_string_lossy()
+            );
+
+            let cmd = format!(
+                "nohup {} daemon-worker > {} 2>&1 &",
+                current_exe.to_string_lossy(),
+                daemon_log_file
+            );
+
+            Command::new("sh").arg("-c").arg(&cmd).status()?;
+
+            // Wait for the daemon to start and create its PID file
+            for _ in 0..20 {
+                thread::sleep(Duration::from_millis(100));
+                if is_daemon_running()?.is_some() {
+                    break;
+                }
+            }
+
+            // Verify the daemon is running
+            if let Some(pid) = is_daemon_running()? {
+                if verify_process_running(pid) {
+                    println!("Daemon started successfully with PID {}.", pid);
+                } else {
+                    return Err(ScribeError::Other(format!(
+                        "Daemon process failed to start. Check logs at {}",
+                        daemon_log_file
+                    )));
+                }
+            } else {
+                return Err(ScribeError::Other(format!(
+                    "Daemon failed to start. Check logs at {}",
+                    daemon_log_file
+                )));
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            use std::process::Command;
+
+            // Get the path to the current executable
+            let current_exe = std::env::current_exe()?;
+
+            // Start the daemon process detached
+            let daemon_log_file = format!(
+                "{}\\daemon_log.txt",
+                crate::config::get_config_dir().to_string_lossy()
+            );
+
+            let cmd = format!(
+                "START /B \"Scribe Daemon\" \"{}\" daemon-worker > \"{}\" 2>&1",
+                current_exe.to_string_lossy(),
+                daemon_log_file
+            );
+
+            Command::new("cmd").arg("/C").arg(&cmd).status()?;
+
+            // Wait for the daemon to start and create its PID file
+            for _ in 0..20 {
+                thread::sleep(Duration::from_millis(100));
+                if is_daemon_running()?.is_some() {
+                    break;
+                }
+            }
+
+            // Verify the daemon is running
+            if let Some(pid) = is_daemon_running()? {
+                if verify_process_running(pid) {
+                    println!("Daemon started successfully with PID {}.", pid);
+                } else {
+                    return Err(ScribeError::Other(format!(
+                        "Daemon process failed to start. Check logs at {}",
+                        daemon_log_file
+                    )));
+                }
+            } else {
+                return Err(ScribeError::Other(format!(
+                    "Daemon failed to start. Check logs at {}",
+                    daemon_log_file
+                )));
             }
         }
     }
 
-    // For non-Unix systems, just continue execution
-    #[cfg(not(unix))]
+    // Now start the API server
+    println!("Starting API server...");
+    let mut current_port = api_port;
+
+    // Find an available port
+    for _ in 0..10 {
+        if port_is_available(current_port) {
+            break;
+        }
+        println!(
+            "Port {} is busy, trying {}...",
+            current_port,
+            current_port + 1
+        );
+        current_port += 1;
+    }
+
+    // Save the API port info
+    if let Err(e) = save_api_port(current_port) {
+        println!("Warning: Failed to save API port information: {}", e);
+    }
+
+    // Start the API server in a separate process
+    let current_exe = std::env::current_exe()?;
+
+    #[cfg(unix)]
     {
-        println!("Starting scribe daemon in the foreground (background not supported on this OS)");
-        run_daemon_worker()
+        use std::process::Command;
+        let log_file = format!(
+            "{}/api_server_log.txt",
+            crate::config::get_config_dir().to_string_lossy()
+        );
+
+        let cmd = format!(
+            "nohup {} serve --port {} > {} 2>&1 &",
+            current_exe.to_string_lossy(),
+            current_port,
+            log_file
+        );
+
+        Command::new("sh").arg("-c").arg(&cmd).status()?;
+
+        // Verify the server started by checking if the port is no longer available
+        // (if the port is no longer available, it means something is listening on it)
+        thread::sleep(Duration::from_secs(2));
+        if !port_is_available(current_port) {
+            println!("API server started on port {}.", current_port);
+            println!(
+                "You can access the server at: http://localhost:{}",
+                current_port
+            );
+            return Ok(());
+        } else {
+            return Err(ScribeError::Other(format!(
+                "API server failed to start. Check log at {}",
+                log_file
+            )));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        let log_file = format!(
+            "{}\\api_server_log.txt",
+            crate::config::get_config_dir().to_string_lossy()
+        );
+
+        let cmd = format!(
+            "START /B \"Scribe API Server\" \"{}\" serve --port {} > \"{}\" 2>&1",
+            current_exe.to_string_lossy(),
+            current_port,
+            log_file
+        );
+
+        Command::new("cmd").arg("/C").arg(&cmd).status()?;
+
+        // Verify the server started
+        thread::sleep(Duration::from_secs(2));
+        if !port_is_available(current_port) {
+            println!("API server started on port {}.", current_port);
+            println!(
+                "You can access the server at: http://localhost:{}",
+                current_port
+            );
+            return Ok(());
+        } else {
+            return Err(ScribeError::Other(format!(
+                "API server failed to start. Check log at {}",
+                log_file
+            )));
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        return Err(ScribeError::Other(
+            "Starting API server not supported on this platform".to_string(),
+        ));
     }
 }
 
@@ -649,13 +825,20 @@ fn is_defender_blocking_likely() -> bool {
     false
 }
 
-/// The actual daemon worker process
-pub fn run_daemon_worker() -> Result<()> {
+/// The daemon worker process (run by the daemon itself)
+#[cfg(unix)]
+pub fn daemon_worker() -> Result<()> {
     // Create PID file
     let pid_file = get_pid_file_path();
     let mut file = File::create(&pid_file)?;
     write!(file, "{}", process::id())?;
 
+    // Run the actual daemon worker
+    run_daemon_worker()
+}
+
+/// The actual daemon worker process
+pub fn run_daemon_worker() -> Result<()> {
     // Load snippets
     let db_path = get_db_file_path();
     if !db_path.exists() {
@@ -792,14 +975,10 @@ pub fn run_daemon_worker() -> Result<()> {
         eprintln!("Error joining keyboard thread: {:?}", e);
     }
 
-    // Cleanup
-    if let Err(e) = fs::remove_file(&pid_file) {
-        eprintln!("Error removing PID file: {}", e);
-    }
-
     Ok(())
 }
 
+/// Stop the daemon if it's running
 /// Stop the daemon if it's running
 pub fn stop_daemon() -> Result<()> {
     let pid_file = get_pid_file_path();
@@ -808,71 +987,222 @@ pub fn stop_daemon() -> Result<()> {
         return Err(ScribeError::DaemonNotRunning);
     }
 
-    let pid_str = fs::read_to_string(&pid_file)?;
-    let pid = pid_str
-        .trim()
-        .parse::<u32>()
-        .map_err(|_| ScribeError::InvalidPid)?;
+    // Read the PID file
+    let pid_str = match fs::read_to_string(&pid_file) {
+        Ok(content) => content,
+        Err(e) => {
+            // If we can't read the PID file, attempt to remove it
+            let _ = fs::remove_file(&pid_file);
+            return Err(ScribeError::Other(format!(
+                "Failed to read PID file: {}",
+                e
+            )));
+        }
+    };
+
+    // Parse the PID
+    let pid = match pid_str.trim().parse::<u32>() {
+        Ok(pid) => pid,
+        Err(_) => {
+            // If PID is invalid, remove the file and return error
+            let _ = fs::remove_file(&pid_file);
+            return Err(ScribeError::InvalidPid);
+        }
+    };
+
+    println!("Attempting to stop daemon with PID {}...", pid);
+
+    // First try to stop the API server
+    let _ = stop_api_server();
+
+    // Check if the process is actually running before attempting to kill it
+    if !verify_process_running(pid) {
+        println!("Process with PID {} is not running.", pid);
+        // Clean up PID file anyway
+        let _ = fs::remove_file(&pid_file);
+        return Ok(());
+    }
 
     #[cfg(unix)]
     {
-        let status = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .status();
+        // On Unix, first try sending SIGTERM for graceful shutdown
+        let mut success = false;
 
-        if let Ok(status) = status {
+        // Try SIGTERM first
+        if let Ok(status) = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status()
+        {
             if status.success() {
-                println!("Stopped scribe daemon with PID {}", pid);
-                fs::remove_file(&pid_file)?;
-                return Ok(());
+                println!("Sent termination signal to daemon with PID {}", pid);
+                success = true;
             }
         }
 
-        return Err(ScribeError::Other(format!(
-            "Failed to stop daemon with PID {}",
-            pid
-        )));
+        // If SIGTERM didn't work, try SIGKILL after a short delay
+        if !success || verify_process_running(pid) {
+            thread::sleep(Duration::from_millis(500));
+
+            if verify_process_running(pid) {
+                println!("Daemon didn't terminate gracefully, using force kill...");
+
+                if let Ok(status) = std::process::Command::new("kill")
+                    .args(&["-9", &pid.to_string()])
+                    .status()
+                {
+                    if status.success() {
+                        println!("Force killed daemon with PID {}", pid);
+                        success = true;
+                    }
+                }
+            } else {
+                success = true; // Process terminated after SIGTERM
+            }
+        }
+
+        // Try to kill any potential child processes too
+        let _ = std::process::Command::new("pkill")
+            .args(&["-P", &pid.to_string()])
+            .status();
+
+        if success {
+            let _ = fs::remove_file(&pid_file);
+            println!("Daemon stopped successfully.");
+            return Ok(());
+        }
     }
 
     #[cfg(windows)]
     {
         use std::process::Command;
-        let status = Command::new("taskkill")
-            .args(&["/PID", &pid.to_string(), "/F"])
-            .status();
 
-        if let Ok(status) = status {
+        let mut success = false;
+
+        // On Windows, first try normal termination
+        if let Ok(status) = Command::new("taskkill")
+            .args(&["/PID", &pid.to_string()])
+            .status()
+        {
             if status.success() {
-                println!("Stopped scribe daemon with PID {}", pid);
-                fs::remove_file(&pid_file)?;
-                return Ok(());
+                println!("Sent termination signal to daemon with PID {}", pid);
+                success = true;
             }
         }
 
-        return Err(ScribeError::Other(format!(
-            "Failed to stop daemon with PID {}",
-            pid
-        )));
+        // If that didn't work, try forced termination
+        if !success || verify_process_running(pid) {
+            thread::sleep(Duration::from_millis(500));
+
+            if verify_process_running(pid) {
+                println!("Daemon didn't terminate gracefully, using force kill...");
+
+                // Kill forcefully and also kill child processes (/T)
+                if let Ok(status) = Command::new("taskkill")
+                    .args(&["/F", "/T", "/PID", &pid.to_string()])
+                    .status()
+                {
+                    if status.success() {
+                        println!("Force killed daemon with PID {}", pid);
+                        success = true;
+                    }
+                }
+            } else {
+                success = true; // Process terminated after normal taskkill
+            }
+        }
+
+        if success {
+            let _ = fs::remove_file(&pid_file);
+            println!("Daemon stopped successfully.");
+            return Ok(());
+        }
     }
 
-    #[cfg(not(any(unix, windows)))]
-    {
-        return Err(ScribeError::Other(
-            "Stopping daemon not supported on this platform".to_string(),
-        ));
-    }
+    // If we get here, all attempts failed
+    println!("WARNING: Failed to stop daemon process. PID file will be removed anyway.");
+    let _ = fs::remove_file(&pid_file);
+
+    Ok(())
 }
 
 /// Check daemon status
 pub fn daemon_status() -> Result<()> {
     match is_daemon_running()? {
         Some(pid) => {
-            println!("scribe daemon is running with PID {}", pid);
-            Ok(())
+            // Verify the process is actually running
+            let process_exists = verify_process_running(pid);
+
+            if process_exists {
+                println!("scribe daemon is running with PID {}", pid);
+
+                // Check if we can find the API port information
+                if let Ok(port) = get_api_server_port() {
+                    println!("API server is running on port {}", port);
+                    println!("UI available at: http://localhost:{}", port);
+                }
+
+                Ok(())
+            } else {
+                // Process not running but PID file exists
+                println!("PID file exists but process {} is not running", pid);
+                println!("This could indicate the daemon crashed or was stopped abruptly");
+                println!("Recommend running 'scribe stop' followed by 'scribe start'");
+                Ok(())
+            }
         }
         None => {
             println!("scribe daemon is not running");
             Ok(())
         }
     }
+}
+
+// Add a helper function to verify if a process is actually running
+#[cfg(unix)]
+fn verify_process_running(pid: u32) -> bool {
+    use std::process::Command;
+
+    // On Unix, we can use kill -0 to check if process exists
+    let output = Command::new("kill")
+        .args(&["-0", &pid.to_string()])
+        .output();
+
+    if let Ok(output) = output {
+        output.status.success()
+    } else {
+        false
+    }
+}
+
+#[cfg(windows)]
+fn verify_process_running(pid: u32) -> bool {
+    use std::process::Command;
+
+    // On Windows, we can use tasklist to check if process exists
+    let output = Command::new("tasklist")
+        .args(&["/FI", &format!("PID eq {}", pid), "/NH"])
+        .output();
+
+    if let Ok(output) = output {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        output_str.contains(&pid.to_string())
+    } else {
+        false
+    }
+}
+
+/// This function runs as a separate daemon process
+pub fn daemon_worker_entry() -> Result<()> {
+    // Create PID file with the current process ID
+    let pid_file = get_pid_file_path();
+    let mut file = File::create(&pid_file)?;
+    write!(file, "{}", process::id())?;
+
+    // Run the actual daemon worker
+    let result = run_daemon_worker();
+
+    // Clean up PID file on exit
+    let _ = fs::remove_file(&pid_file);
+
+    result
 }
