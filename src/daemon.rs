@@ -16,13 +16,38 @@ use std::time::Duration;
 
 #[cfg(target_os = "macos")]
 const SWIFT_CHECK_PERMISSIONS: &str = r#"
-import Cocoa
 import Foundation
+import AppKit
 
-let checkOptPrompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as NSString
-let options = [checkOptPrompt: false]
-let accessEnabled = AXIsProcessTrustedWithOptions(options as CFDictionary)
-print(accessEnabled)
+@discardableResult
+func checkAccessibilityPermissions() -> Bool {
+    let checkOptPrompt = "AXTrustedCheckOptionPrompt"
+    let options = [checkOptPrompt: false] as CFDictionary
+
+    // Call AXIsProcessTrustedWithOptions through dlsym to avoid direct linkage
+    let axlib = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_LAZY)
+    defer { if axlib != nil { dlclose(axlib) } }
+
+    typealias AXIsProcessTrustedWithOptionsType = @convention(c) (CFDictionary?) -> Bool
+    let axFuncPtr = dlsym(axlib, "AXIsProcessTrustedWithOptions")
+
+    var accessEnabled = false
+    if axFuncPtr != nil {
+        let axFunc = unsafeBitCast(axFuncPtr, to: AXIsProcessTrustedWithOptionsType.self)
+        accessEnabled = axFunc(options)
+    } else {
+        // Fallback to UI check
+        let workspace = NSWorkspace.shared
+        let runningApps = workspace.runningApplications
+        let secPrefsRunning = runningApps.contains(where: { $0.bundleIdentifier == "com.apple.systempreferences" })
+        accessEnabled = secPrefsRunning
+    }
+
+    print(accessEnabled)
+    return accessEnabled
+}
+
+checkAccessibilityPermissions()
 "#;
 
 /// Start the daemon process
@@ -110,8 +135,8 @@ fn check_and_request_permissions() -> Result<()> {
 fn has_accessibility_permission() -> bool {
     use std::process::Command;
 
-    // Try to check if we have accessibility permissions using Swift
-    let output = Command::new("swift")
+    // First try the scripting approach
+    let swift_result = Command::new("swift")
         .arg("-")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -124,13 +149,25 @@ fn has_accessibility_permission() -> bool {
             child.wait_with_output()
         });
 
-    if let Ok(output) = output {
+    if let Ok(output) = swift_result {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        stdout.trim() == "true"
-    } else {
-        // If the check fails, assume we don't have permission
-        false
+        if stdout.trim() == "true" {
+            return true;
+        }
     }
+
+    // Fallback approach: try to access input monitoring directly
+    let test_result = Command::new("sh")
+        .arg("-c")
+        .arg(r#"osascript -e 'tell application "System Events" to keystroke ""' 2>/dev/null && echo success || echo failed"#)
+        .output();
+
+    if let Ok(output) = test_result {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return stdout.trim() == "success";
+    }
+
+    false
 }
 
 #[cfg(target_os = "macos")]
@@ -141,7 +178,8 @@ fn request_macos_permissions() -> Result<()> {
     println!("⚠️  Scribe needs accessibility permissions to detect keyboard input");
     println!("---------------------------------------------------------------");
     println!("Please follow these steps:");
-    println!("1. System Preferences will open to: Security & Privacy > Privacy > Accessibility");
+    println!("1. System Settings will open to: Privacy & Security > Privacy > Accessibility");
+    println!("   (On older macOS versions: Security & Privacy > Privacy > Accessibility)");
     println!("2. Click the lock icon at the bottom left to make changes");
     println!("3. Look for your terminal app ('{}')", terminal_app);
     println!("4. Check the box next to your terminal application");
@@ -149,12 +187,21 @@ fn request_macos_permissions() -> Result<()> {
     println!();
     println!("Scribe runs inside your terminal, so it's your terminal app");
     println!("that needs permission, not your shell or Scribe itself.");
+    println!();
+    println!("Note: On macOS 14 (Sonoma) or newer, you may need to:");
+    println!("- Go to Privacy & Security > Input Monitoring as well");
+    println!("- Grant permissions there too for your terminal app");
 
     use std::process::Command;
 
-    // Open System Preferences to the right section
+    // Try both ways to open settings (for compatibility with different macOS versions)
     let _ = Command::new("open")
         .args(&["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+        .status();
+
+    // For newer macOS versions (Sonoma+)
+    let _ = Command::new("open")
+        .args(&["x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"])
         .status();
 
     println!("\nPress Enter once you've granted permission...");
@@ -162,12 +209,30 @@ fn request_macos_permissions() -> Result<()> {
     std::io::stdin().read_line(&mut input)?;
 
     if !has_accessibility_permission() {
-        return Err(ScribeError::PermissionDenied(format!(
-            "Accessibility permission not granted for {}",
+        // One more attempt to open settings with more specific instructions
+        println!("\nPermission not detected. Please try again.");
+        println!("Make sure to:");
+        println!(
+            "1. Check the box next to '{}' in the Accessibility list",
             terminal_app
-        )));
+        );
+        println!("2. Also grant permission in Input Monitoring (on macOS 14+)");
+        println!("3. If '{}' isn't listed, click '+' to add it", terminal_app);
+
+        // Ask again
+        println!("\nPress Enter once you've completed these steps...");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+
+        if !has_accessibility_permission() {
+            return Err(ScribeError::PermissionDenied(format!(
+                "Accessibility permission not granted for {}. Please restart and try again.",
+                terminal_app
+            )));
+        }
     }
 
+    println!("\n✅ Permission granted successfully!");
     Ok(())
 }
 
