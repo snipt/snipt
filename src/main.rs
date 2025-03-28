@@ -2,12 +2,13 @@ use clap::{Parser, Subcommand};
 use crossterm::execute;
 use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::LeaveAlternateScreen;
-use scribe::daemon::get_api_server_port;
+use scribe::daemon::daemon_worker_entry;
 use scribe::display_scribe_dashboard;
 use scribe::interactive_add;
 use scribe::server;
 use scribe::server::check_api_server_health;
 use scribe::server::diagnose_api_server;
+use scribe::server::get_api_server_port;
 use scribe::start_daemon;
 use scribe::AddResult;
 use scribe::{
@@ -76,6 +77,9 @@ enum Commands {
     ApiStatus,
     /// Diagnose API server issues
     ApiDiagnose,
+    // Hidden command used internally to run the daemon worker
+    #[clap(hide = true)]
+    DaemonWorker,
 }
 
 fn main() {
@@ -193,6 +197,8 @@ fn main() {
             Err(e) => Err(e),
         },
         Some(Commands::ApiDiagnose) => diagnose_api_server(),
+        // Hidden command used internally to run the daemon worker
+        Some(Commands::DaemonWorker) => daemon_worker_entry(),
         None => {
             // When no command is provided, launch the main UI
             display_main_ui()

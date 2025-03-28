@@ -123,7 +123,7 @@ pub async fn test_port_availability(port: u16) -> bool {
 
 // Add a health check function
 pub fn check_api_server_health() -> Result<()> {
-    match crate::daemon::get_api_server_port() {
+    match get_api_server_port() {
         Ok(port) => {
             println!("Checking API server on port {}...", port);
 
@@ -325,7 +325,25 @@ pub fn get_api_server_port() -> Result<u16> {
 }
 
 /// Check if a port is available by trying to bind to it
-fn port_is_available(port: u16) -> bool {
+pub fn port_is_available(port: u16) -> bool {
     use std::net::TcpListener;
     TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok()
+}
+
+/// Save the API port to a configuration file
+pub fn save_api_port(port: u16) -> Result<()> {
+    use crate::config::get_config_dir;
+    use std::fs;
+    use std::io::Write;
+
+    let config_dir = get_config_dir();
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir)?;
+    }
+
+    let port_file_path = config_dir.join("api_port.txt");
+    let mut file = fs::File::create(port_file_path)?;
+    write!(file, "{}", port)?;
+
+    Ok(())
 }
