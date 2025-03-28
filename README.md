@@ -3,8 +3,6 @@
 
 <div align="center">
 
-![Scribe Logo](https://via.placeholder.com/150x150)
-
 **Type less, say more. Text expansion that works everywhere.**
 
 [![GitHub license](https://img.shields.io/github/license/snipt/scribe)](https://github.com/snipt/scribe/blob/main/LICENSE)
@@ -99,7 +97,7 @@ This instantly expands to "Hello, world!" (or your custom text).
 
 <div align="center">
 
-![Scribe TUI Screenshot](https://via.placeholder.com/600x400)
+![Scribe TUI Screenshot](assets/images/scribe-tui-screenshot.png)
 
 </div>
 
