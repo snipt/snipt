@@ -24,6 +24,8 @@ path = "src/main.rs"
 # UI and terminal handling
 ratatui = "0.23.0"
 crossterm = "0.27.0"
+warp = "0.3"
+tokio = { version = "1", features = ["full"] }
 
 # CLI argument parsing
 clap = { version = "4.3.10", features = ["derive"] }

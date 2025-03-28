@@ -4,6 +4,7 @@ use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::LeaveAlternateScreen;
 use scribe::display_scribe_dashboard;
 use scribe::interactive_add;
+use scribe::server;
 use scribe::AddResult;
 use scribe::{
     add_snippet, daemon_status, delete_snippet, display_snippet_manager, is_daemon_running,
@@ -57,6 +58,11 @@ enum Commands {
     Status,
     /// List all the configs
     List,
+    /// Start the API server for the Electron UI
+    Serve {
+        #[clap(long, short, default_value = "3000", help = "Port to listen on")]
+        port: u16,
+    },
 }
 
 fn main() {
@@ -140,6 +146,14 @@ fn main() {
             Ok(())
         }
         Some(Commands::List) => display_snippet_manager(),
+        Some(Commands::Serve { port }) => {
+            // Start API server
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async { server::start_api_server(port).await })
+        }
         None => {
             // When no command is provided, launch the main UI
             display_main_ui()
