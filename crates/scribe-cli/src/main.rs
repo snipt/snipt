@@ -7,8 +7,9 @@ use scribe_core::{add_snippet, delete_snippet, is_daemon_running, update_snippet
 use scribe_daemon::{
     daemon_status, daemon_worker_entry, run_daemon_worker, start_daemon, stop_daemon,
 };
-use scribe_server::server::get_api_server_port;
-use scribe_server::{check_api_server_health, diagnose_api_server, start_api_server};
+use scribe_server::server::http_server::{check_api_server_health, diagnose_api_server};
+use scribe_server::server::start_api_server;
+use scribe_server::server::utils::get_api_server_port;
 use scribe_ui::{display_scribe_dashboard, display_snippet_manager, interactive_add, AddResult};
 
 use std::env;

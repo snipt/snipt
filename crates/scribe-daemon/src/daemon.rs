@@ -3,9 +3,8 @@ use scribe_core::config::{db_file_exists, ensure_config_dir, get_db_file_path, g
 use scribe_core::expansion::{process_expansion, replace_text};
 use scribe_core::keyboard::rdev_key_to_char;
 use scribe_core::{get_config_dir, is_daemon_running, load_snippets, Result, ScribeError};
-use scribe_server::server::{
-    get_api_server_port, port_is_available, save_api_port, stop_api_server,
-};
+use scribe_server::server::http_server::stop_api_server;
+use scribe_server::server::utils::{get_api_server_port, port_is_available, save_api_port};
 use std::fs::{self, File};
 use std::io::Write;
 use std::process;

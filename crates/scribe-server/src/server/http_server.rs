@@ -1,39 +1,34 @@
+//! HTTP server implementation for the Scribe API.
+
 use crate::api::{
-    api_add_snippet, api_daemon_details, api_daemon_status, api_delete_snippet, api_get_snippet,
-    api_get_snippets, api_update_snippet,
+    add_snippet_handler, delete_snippet_handler, get_daemon_details, get_daemon_status,
+    get_snippet, get_snippets, update_snippet_handler, DeleteSnippetRequest, GetSnippetRequest,
+    SnippetRequest,
 };
+use crate::server::utils::{port_is_available, save_api_port};
 
 use scribe_core::{get_config_dir, is_daemon_running, Result, ScribeError};
-use serde::Deserialize;
 use std::fs;
 use std::net::SocketAddr;
 use warp::Filter;
 
-#[derive(Deserialize)]
-struct AddSnippet {
-    shortcut: String,
-    snippet: String,
-}
+use super::utils::get_api_server_port;
 
-#[derive(Deserialize)]
-struct DeleteSnippet {
-    shortcut: String,
-}
-
-#[derive(Deserialize)]
-struct GetSnippet {
-    shortcut: String,
-}
-
+/// Start the HTTP API server on the specified port
 pub async fn start_api_server(port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
+
+    // Save the port to file so we can find it later
+    save_api_port(port)?;
+
     println!("┌─────────────────────────────────────────┐");
-    println!("│          Scribe API Server                                          |");
+    println!("│          Scribe API Server              │");
     println!("├─────────────────────────────────────────┤");
-    println!("│ Status: Running                                                     |");
+    println!("│ Status: Running                         │");
     println!("│ Port:   {:<33} │", port);
     println!("│ URL:    http://localhost:{:<21} │", port);
     println!("└─────────────────────────────────────────┘");
+
     // CORS for development
     let cors = warp::cors()
         .allow_any_origin()
@@ -41,52 +36,56 @@ pub async fn start_api_server(port: u16) -> Result<()> {
         .allow_methods(vec!["GET", "POST", "DELETE", "PUT"]);
 
     // API routes
-    let get_snippets = warp::path!("api" / "snippets")
+    let get_snippets_route = warp::path!("api" / "snippets")
         .and(warp::get())
-        .map(|| warp::reply::json(&api_get_snippets()));
+        .map(|| warp::reply::json(&get_snippets()));
 
-    let get_snippet = warp::path!("api" / "snippet")
+    let get_snippet_route = warp::path!("api" / "snippet")
         .and(warp::get())
-        .and(warp::query::<GetSnippet>())
-        .map(|query: GetSnippet| warp::reply::json(&api_get_snippet(&query.shortcut)));
+        .and(warp::query::<GetSnippetRequest>())
+        .map(|query: GetSnippetRequest| warp::reply::json(&get_snippet(&query.shortcut)));
 
-    let add_snippet = warp::path!("api" / "snippets")
+    let add_snippet_route = warp::path!("api" / "snippets")
         .and(warp::post())
         .and(warp::body::json())
-        .map(|body: AddSnippet| warp::reply::json(&api_add_snippet(body.shortcut, body.snippet)));
-
-    let update_snippet = warp::path!("api" / "snippets")
-        .and(warp::put())
-        .and(warp::body::json())
-        .map(|body: AddSnippet| {
-            warp::reply::json(&api_update_snippet(body.shortcut, body.snippet))
+        .map(|body: SnippetRequest| {
+            warp::reply::json(&add_snippet_handler(body.shortcut, body.snippet))
         });
 
-    let delete_snippet = warp::path!("api" / "snippets")
+    let update_snippet_route = warp::path!("api" / "snippets")
+        .and(warp::put())
+        .and(warp::body::json())
+        .map(|body: SnippetRequest| {
+            warp::reply::json(&update_snippet_handler(body.shortcut, body.snippet))
+        });
+
+    let delete_snippet_route = warp::path!("api" / "snippets")
         .and(warp::delete())
-        .and(warp::query::<DeleteSnippet>())
-        .map(|query: DeleteSnippet| warp::reply::json(&api_delete_snippet(query.shortcut)));
+        .and(warp::query::<DeleteSnippetRequest>())
+        .map(|query: DeleteSnippetRequest| {
+            warp::reply::json(&delete_snippet_handler(query.shortcut))
+        });
 
-    let daemon_status = warp::path!("api" / "daemon" / "status")
+    let daemon_status_route = warp::path!("api" / "daemon" / "status")
         .and(warp::get())
-        .map(|| warp::reply::json(&api_daemon_status()));
+        .map(|| warp::reply::json(&get_daemon_status()));
 
-    let daemon_details = warp::path!("api" / "daemon" / "details")
+    let daemon_details_route = warp::path!("api" / "daemon" / "details")
         .and(warp::get())
-        .map(move || warp::reply::json(&api_daemon_details(port)));
+        .map(move || warp::reply::json(&get_daemon_details(port)));
 
     // Health check endpoint
-    let health = warp::path!("health").map(|| "Scribe API is running");
+    let health_route = warp::path!("health").map(|| "Scribe API is running");
 
     // Combine routes
-    let routes = get_snippets
-        .or(get_snippet)
-        .or(add_snippet)
-        .or(update_snippet)
-        .or(delete_snippet)
-        .or(daemon_status)
-        .or(daemon_details)
-        .or(health)
+    let routes = get_snippets_route
+        .or(get_snippet_route)
+        .or(add_snippet_route)
+        .or(update_snippet_route)
+        .or(delete_snippet_route)
+        .or(daemon_status_route)
+        .or(daemon_details_route)
+        .or(health_route)
         .with(cors);
 
     // Use warp's TcpListener creation to handle binding errors gracefully
@@ -111,17 +110,7 @@ pub async fn start_api_server(port: u16) -> Result<()> {
     }
 }
 
-pub async fn test_port_availability(port: u16) -> bool {
-    use std::net::TcpListener;
-
-    // Try to bind to the port to see if it's available
-    match TcpListener::bind(format!("127.0.0.1:{}", port)) {
-        Ok(_) => true,   // Port is available
-        Err(_) => false, // Port is in use or cannot be bound to
-    }
-}
-
-// Add a health check function
+/// Check the health of a running API server
 pub fn check_api_server_health() -> Result<()> {
     match get_api_server_port() {
         Ok(port) => {
@@ -198,6 +187,7 @@ pub fn stop_api_server() -> Result<()> {
     Ok(())
 }
 
+/// Run a diagnostic on the API server
 pub fn diagnose_api_server() -> Result<()> {
     println!("Scribe API Server Diagnostics");
     println!("============================");
@@ -296,52 +286,6 @@ pub fn diagnose_api_server() -> Result<()> {
     println!("\nTo start the API server, you can run: scribe serve --port <port>");
     println!("To restart daemon and API: scribe start");
     println!("To stop all services: scribe stop");
-
-    Ok(())
-}
-
-/// Try to get the API server port from stored configuration
-pub fn get_api_server_port() -> Result<u16> {
-    use std::fs;
-    use std::io::Read;
-
-    let port_file_path = get_config_dir().join("api_port.txt");
-
-    if port_file_path.exists() {
-        let mut file = fs::File::open(port_file_path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-
-        contents
-            .trim()
-            .parse::<u16>()
-            .map_err(|_| ScribeError::Other("Invalid port stored in configuration".to_string()))
-    } else {
-        Err(ScribeError::Other(
-            "API server port information not found".to_string(),
-        ))
-    }
-}
-
-/// Check if a port is available by trying to bind to it
-pub fn port_is_available(port: u16) -> bool {
-    use std::net::TcpListener;
-    TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok()
-}
-
-/// Save the API port to a configuration file
-pub fn save_api_port(port: u16) -> Result<()> {
-    use std::fs;
-    use std::io::Write;
-
-    let config_dir = get_config_dir();
-    if !config_dir.exists() {
-        fs::create_dir_all(&config_dir)?;
-    }
-
-    let port_file_path = config_dir.join("api_port.txt");
-    let mut file = fs::File::create(port_file_path)?;
-    write!(file, "{}", port)?;
 
     Ok(())
 }
