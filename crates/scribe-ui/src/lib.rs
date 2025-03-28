@@ -1,5 +1,9 @@
-pub mod interactive;
-pub mod ui;
+mod common;
+mod dashboard;
+mod editor;
+mod snippet_manager;
 
-pub use interactive::{interactive_add, AddResult};
-pub use ui::{display_scribe_dashboard, display_snippet_manager};
+// Public API
+pub use dashboard::display_scribe_dashboard;
+pub use editor::{interactive_add, AddResult};
+pub use snippet_manager::display_snippet_manager;
