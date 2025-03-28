@@ -20,7 +20,20 @@ pub fn ensure_config_dir() -> Result<PathBuf> {
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir)?;
     }
+
+    let db_path = get_db_file_path();
+    if !db_path.exists() {
+        create_empty_file(&db_path, "database file")?;
+    }
+
     Ok(config_dir)
+}
+
+/// Create an empty config file at the specified path
+pub fn create_empty_file(path: &PathBuf, description: &str) -> Result<()> {
+    println!("Creating {} at: {}", description, path.display());
+    fs::write(path, "")?;
+    Ok(())
 }
 
 /// Get the path to the PID file
