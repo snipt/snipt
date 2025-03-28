@@ -17,37 +17,35 @@ use std::time::Duration;
 #[cfg(target_os = "macos")]
 const SWIFT_CHECK_PERMISSIONS: &str = r#"
 import Foundation
-import AppKit
 
-@discardableResult
-func checkAccessibilityPermissions() -> Bool {
-    let checkOptPrompt = "AXTrustedCheckOptionPrompt"
-    let options = [checkOptPrompt: false] as CFDictionary
+// Simple function to check accessibility without AppKit dependencies
+func checkAccessibility() -> Bool {
+    let process = Process()
+    process.launchPath = "/usr/bin/osascript"
+    process.arguments = ["-e", "tell application \"System Events\" to return name of first process"]
 
-    // Call AXIsProcessTrustedWithOptions through dlsym to avoid direct linkage
-    let axlib = dlopen("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices", RTLD_LAZY)
-    defer { if axlib != nil { dlclose(axlib) } }
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
 
-    typealias AXIsProcessTrustedWithOptionsType = @convention(c) (CFDictionary?) -> Bool
-    let axFuncPtr = dlsym(axlib, "AXIsProcessTrustedWithOptions")
+    do {
+        try process.run()
+        process.waitUntilExit()
 
-    var accessEnabled = false
-    if axFuncPtr != nil {
-        let axFunc = unsafeBitCast(axFuncPtr, to: AXIsProcessTrustedWithOptionsType.self)
-        accessEnabled = axFunc(options)
-    } else {
-        // Fallback to UI check
-        let workspace = NSWorkspace.shared
-        let runningApps = workspace.runningApplications
-        let secPrefsRunning = runningApps.contains(where: { $0.bundleIdentifier == "com.apple.systempreferences" })
-        accessEnabled = secPrefsRunning
+        if process.terminationStatus == 0 {
+            // If we got output, we have accessibility permissions
+            return true
+        } else {
+            return false
+        }
+    } catch {
+        return false
     }
-
-    print(accessEnabled)
-    return accessEnabled
 }
 
-checkAccessibilityPermissions()
+// Run the check and print the result so Rust can read it
+let result = checkAccessibility()
+print(result)
 "#;
 
 /// Start the daemon process
@@ -135,7 +133,7 @@ fn check_and_request_permissions() -> Result<()> {
 fn has_accessibility_permission() -> bool {
     use std::process::Command;
 
-    // First try the scripting approach
+    // First try the Swift approach
     let swift_result = Command::new("swift")
         .arg("-")
         .stdin(std::process::Stdio::piped())
@@ -156,20 +154,19 @@ fn has_accessibility_permission() -> bool {
         }
     }
 
-    // Fallback approach: try to access input monitoring directly
-    let test_result = Command::new("sh")
-        .arg("-c")
-        .arg(r#"osascript -e 'tell application "System Events" to keystroke ""' 2>/dev/null && echo success || echo failed"#)
+    // Direct AppleScript test as a fallback
+    let apple_script_test = Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"System Events\" to return name of first process")
         .output();
 
-    if let Ok(output) = test_result {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        return stdout.trim() == "success";
+    match apple_script_test {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
     }
-
-    false
 }
 
+#[cfg(target_os = "macos")]
 #[cfg(target_os = "macos")]
 fn request_macos_permissions() -> Result<()> {
     // Determine which terminal application is currently in use
@@ -178,38 +175,40 @@ fn request_macos_permissions() -> Result<()> {
     println!("⚠️  Scribe needs accessibility permissions to detect keyboard input");
     println!("---------------------------------------------------------------");
     println!("Please follow these steps:");
-    println!("1. System Settings will open to: Privacy & Security > Privacy > Accessibility");
-    println!("   (On older macOS versions: Security & Privacy > Privacy > Accessibility)");
-    println!("2. Click the lock icon at the bottom left to make changes");
-    println!("3. Look for your terminal app ('{}')", terminal_app);
-    println!("4. Check the box next to your terminal application");
+    println!("1. You'll be prompted to open System Settings/Preferences");
+    println!("2. Go to Privacy & Security > Privacy > Accessibility");
+    println!("   (On older macOS: Security & Privacy > Privacy > Accessibility)");
+    println!("3. Click the lock icon at the bottom left to make changes");
+    println!("4. Find and check the box next to '{}'", terminal_app);
     println!("5. If it's already checked, uncheck and recheck it");
     println!();
-    println!("Scribe runs inside your terminal, so it's your terminal app");
-    println!("that needs permission, not your shell or Scribe itself.");
+    println!("Note: On macOS 14 (Sonoma) or newer, you also need to:");
+    println!(
+        "- Grant permission in Input Monitoring for '{}'",
+        terminal_app
+    );
     println!();
-    println!("Note: On macOS 14 (Sonoma) or newer, you may need to:");
-    println!("- Go to Privacy & Security > Input Monitoring as well");
-    println!("- Grant permissions there too for your terminal app");
 
-    use std::process::Command;
+    // Ask user to open System Settings manually to avoid API issues
+    println!("Would you like to open System Settings now? (y/n)");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
 
-    // Try both ways to open settings (for compatibility with different macOS versions)
-    let _ = Command::new("open")
-        .args(&["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
-        .status();
+    if input.trim().to_lowercase() == "y" {
+        use std::process::Command;
 
-    // For newer macOS versions (Sonoma+)
-    let _ = Command::new("open")
-        .args(&["x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"])
-        .status();
+        // Try both ways to open settings (for compatibility with different macOS versions)
+        let _ = Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .status();
+    }
 
     println!("\nPress Enter once you've granted permission...");
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
 
+    // Check permission
     if !has_accessibility_permission() {
-        // One more attempt to open settings with more specific instructions
         println!("\nPermission not detected. Please try again.");
         println!("Make sure to:");
         println!(
@@ -217,16 +216,21 @@ fn request_macos_permissions() -> Result<()> {
             terminal_app
         );
         println!("2. Also grant permission in Input Monitoring (on macOS 14+)");
-        println!("3. If '{}' isn't listed, click '+' to add it", terminal_app);
 
-        // Ask again
-        println!("\nPress Enter once you've completed these steps...");
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
+        println!("\nWould you like to try testing again? (y/n)");
+        let mut retry = String::new();
+        std::io::stdin().read_line(&mut retry)?;
 
-        if !has_accessibility_permission() {
+        if retry.trim().to_lowercase() == "y" {
+            if !has_accessibility_permission() {
+                return Err(ScribeError::PermissionDenied(format!(
+                    "Accessibility permission not granted for {}. Please restart and try again.",
+                    terminal_app
+                )));
+            }
+        } else {
             return Err(ScribeError::PermissionDenied(format!(
-                "Accessibility permission not granted for {}. Please restart and try again.",
+                "Setup aborted. Please restart Scribe after granting permissions to {}.",
                 terminal_app
             )));
         }
@@ -498,6 +502,38 @@ fn detect_desktop_environment() -> String {
 
     // Fallback
     "Unknown".to_string()
+}
+// Also add this Linux-specific function that was referenced but not defined in your code
+#[cfg(target_os = "linux")]
+fn has_input_permission() -> bool {
+    // Check if we have permission to access input devices
+    use std::path::Path;
+
+    // Try to read from /dev/input/event0 as a test
+    if Path::new("/dev/input/event0").exists() {
+        match std::fs::File::open("/dev/input/event0") {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    } else {
+        // If the file doesn't exist, check group membership
+        let output = std::process::Command::new("groups")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok());
+
+        if let Some(groups) = output {
+            groups.contains("input")
+        } else {
+            false
+        }
+    }
+}
+
+// Add this function that was referenced but not defined
+#[cfg(target_os = "linux")]
+fn is_running_as_sudo() -> bool {
+    std::env::var("SUDO_USER").is_ok()
 }
 
 #[cfg(target_os = "windows")]
