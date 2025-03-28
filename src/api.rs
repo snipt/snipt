@@ -1,4 +1,5 @@
 use crate::config::{get_db_file_path, is_daemon_running};
+use crate::daemon::get_api_server_port;
 use crate::models::SnippetEntry;
 use crate::storage::{add_snippet, delete_snippet, load_snippets, update_snippet};
 use serde::{Deserialize, Serialize};
@@ -80,13 +81,20 @@ pub fn api_daemon_status() -> ApiResponse<bool> {
 }
 
 // Get daemon details
-pub fn api_daemon_details() -> ApiResponse<DaemonStatus> {
+pub fn api_daemon_details(port: u16) -> ApiResponse<DaemonStatus> {
     match is_daemon_running() {
         Ok(status) => {
+            // Try to get the actual port in case it's different
+            let actual_port = get_api_server_port().unwrap_or(port);
+
             let status = DaemonStatus {
                 running: status.is_some(),
                 pid: status,
                 config_path: get_db_file_path().to_string_lossy().to_string(),
+                api_server: ApiServerInfo {
+                    port: actual_port,
+                    url: format!("http://localhost:{}", actual_port),
+                },
             };
             ApiResponse::success(status)
         }
@@ -99,4 +107,11 @@ pub struct DaemonStatus {
     pub running: bool,
     pub pid: Option<u32>,
     pub config_path: String,
+    pub api_server: ApiServerInfo,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ApiServerInfo {
+    pub port: u16,
+    pub url: String,
 }

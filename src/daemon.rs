@@ -4,6 +4,7 @@ use crate::config::{
 use crate::error::{Result, ScribeError};
 use crate::expansion::{process_expansion, replace_text};
 use crate::keyboard::rdev_key_to_char;
+use crate::server::stop_api_server;
 use crate::storage::load_snippets;
 
 use rdev::{self, listen, EventType, Key as RdevKey};
@@ -49,55 +50,136 @@ print(result)
 "#;
 
 /// Start the daemon process
-pub fn start_daemon() -> Result<()> {
+pub fn start_daemon(api_port: u16) -> Result<()> {
     // Check if daemon is already running
     if let Some(pid) = is_daemon_running()? {
-        return Err(ScribeError::DaemonAlreadyRunning(pid));
+        println!("Daemon is already running with PID {}.", pid);
+    } else {
+        println!("Starting scribe daemon...");
+
+        // Ensure config directory exists
+        ensure_config_dir()?;
+
+        // Check if database exists
+        if !db_file_exists() {
+            return Err(ScribeError::DatabaseNotFound(
+                get_db_file_path().to_string_lossy().to_string(),
+            ));
+        }
+
+        // Check and request permissions if needed
+        check_and_request_permissions()?;
+
+        // Start the daemon in a background thread
+        thread::spawn(|| {
+            if let Err(e) = run_daemon_worker() {
+                eprintln!("Daemon worker failed: {}", e);
+            }
+        });
+
+        // Wait a moment to ensure the daemon is running
+        thread::sleep(Duration::from_millis(500));
+        println!("Daemon started successfully.");
     }
 
-    // Ensure config directory exists
-    ensure_config_dir()?;
+    // Now start the API server
+    println!("Starting API server...");
+    let mut current_port = api_port;
 
-    // Check if database exists
-    if !db_file_exists() {
-        return Err(ScribeError::DatabaseNotFound(
-            get_db_file_path().to_string_lossy().to_string(),
-        ));
+    // Find an available port
+    for _ in 0..10 {
+        if port_is_available(current_port) {
+            break;
+        }
+        println!(
+            "Port {} is busy, trying {}...",
+            current_port,
+            current_port + 1
+        );
+        current_port += 1;
     }
 
-    // Check and request permissions if needed
-    check_and_request_permissions()?;
+    // Save the API port info
+    if let Err(e) = save_api_port(current_port) {
+        println!("Warning: Failed to save API port information: {}", e);
+    }
 
-    // Fork to background on Unix systems
+    // Start the API server in a separate process
+    let current_exe = std::env::current_exe()?;
+
     #[cfg(unix)]
     {
-        use daemonize::Daemonize;
-        println!("Starting scribe daemon in the background");
+        use std::process::Command;
+        let log_file = format!(
+            "{}/api_server_log.txt",
+            crate::config::get_config_dir().to_string_lossy()
+        );
 
-        let pid_file = get_pid_file_path();
+        let cmd = format!(
+            "nohup {} serve --port {} > {} 2>&1 &",
+            current_exe.to_string_lossy(),
+            current_port,
+            log_file
+        );
 
-        // Create a new daemonize process
-        let daemonize = Daemonize::new()
-            .pid_file(&pid_file)
-            .chown_pid_file(true)
-            .working_directory("/tmp")
-            .stdout(File::create("/dev/null")?)
-            .stderr(File::create("/dev/null")?);
+        Command::new("sh").arg("-c").arg(&cmd).status()?;
 
-        match daemonize.start() {
-            Ok(_) => run_daemon_worker(), // We're now in the daemon process
-            Err(e) => {
-                let msg = format!("Error starting daemon: {}", e);
-                Err(ScribeError::Other(msg))
-            }
+        // Verify the server started
+        thread::sleep(Duration::from_secs(2));
+        if !port_is_available(current_port) {
+            println!("API server started on port {}.", current_port);
+            println!(
+                "You can access the UI at: http://localhost:{}",
+                current_port
+            );
+            return Ok(());
+        } else {
+            return Err(ScribeError::Other(format!(
+                "API server failed to start. Check log at {}",
+                log_file
+            )));
         }
     }
 
-    // For non-Unix systems, just continue execution
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        println!("Starting scribe daemon in the foreground (background not supported on this OS)");
-        run_daemon_worker()
+        use std::process::Command;
+        let log_file = format!(
+            "{}\\api_server_log.txt",
+            crate::config::get_config_dir().to_string_lossy()
+        );
+
+        let cmd = format!(
+            "START /B \"Scribe API Server\" \"{}\" serve --port {} > \"{}\" 2>&1",
+            current_exe.to_string_lossy(),
+            current_port,
+            log_file
+        );
+
+        Command::new("cmd").arg("/C").arg(&cmd).status()?;
+
+        // Verify the server started
+        thread::sleep(Duration::from_secs(2));
+        if !port_is_available(current_port) {
+            println!("API server started on port {}.", current_port);
+            println!(
+                "You can access the UI at: http://localhost:{}",
+                current_port
+            );
+            return Ok(());
+        } else {
+            return Err(ScribeError::Other(format!(
+                "API server failed to start. Check log at {}",
+                log_file
+            )));
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        return Err(ScribeError::Other(
+            "Starting API server not supported on this platform".to_string(),
+        ));
     }
 }
 
@@ -649,6 +731,18 @@ fn is_defender_blocking_likely() -> bool {
     false
 }
 
+/// The daemon worker process (run by the daemon itself)
+#[cfg(unix)]
+pub fn daemon_worker() -> Result<()> {
+    // Create PID file
+    let pid_file = get_pid_file_path();
+    let mut file = File::create(&pid_file)?;
+    write!(file, "{}", process::id())?;
+
+    // Run the actual daemon worker
+    run_daemon_worker()
+}
+
 /// The actual daemon worker process
 pub fn run_daemon_worker() -> Result<()> {
     // Create PID file
@@ -814,8 +908,21 @@ pub fn stop_daemon() -> Result<()> {
         .parse::<u32>()
         .map_err(|_| ScribeError::InvalidPid)?;
 
+    let _ = stop_api_server();
+
     #[cfg(unix)]
     {
+        // Find children of the daemon process
+        let api_server_killed = std::process::Command::new("pkill")
+            .args(&["-P", &pid.to_string()])
+            .status();
+
+        if let Ok(status) = api_server_killed {
+            if status.success() {
+                println!("API server stopped.");
+            }
+        }
+
         let status = std::process::Command::new("kill")
             .arg(pid.to_string())
             .status();
@@ -837,6 +944,10 @@ pub fn stop_daemon() -> Result<()> {
     #[cfg(windows)]
     {
         use std::process::Command;
+
+        let _ = Command::new("taskkill")
+            .args(&["/T", "/F", "/PID", &pid.to_string()])
+            .status();
         let status = Command::new("taskkill")
             .args(&["/PID", &pid.to_string(), "/F"])
             .status();
@@ -868,6 +979,13 @@ pub fn daemon_status() -> Result<()> {
     match is_daemon_running()? {
         Some(pid) => {
             println!("scribe daemon is running with PID {}", pid);
+
+            // Check if we can find the API port information
+            if let Ok(port) = get_api_server_port() {
+                println!("API server is running on port {}", port);
+                println!("UI available at: http://localhost:{}", port);
+            }
+
             Ok(())
         }
         None => {
@@ -875,4 +993,52 @@ pub fn daemon_status() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Try to get the API server port from stored configuration
+pub fn get_api_server_port() -> Result<u16> {
+    use crate::config::get_config_dir;
+    use std::fs;
+    use std::io::Read;
+
+    let port_file_path = get_config_dir().join("api_port.txt");
+
+    if port_file_path.exists() {
+        let mut file = fs::File::open(port_file_path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        contents
+            .trim()
+            .parse::<u16>()
+            .map_err(|_| ScribeError::Other("Invalid port stored in configuration".to_string()))
+    } else {
+        Err(ScribeError::Other(
+            "API server port information not found".to_string(),
+        ))
+    }
+}
+
+/// Check if a port is available by trying to bind to it
+fn port_is_available(port: u16) -> bool {
+    use std::net::TcpListener;
+    TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok()
+}
+
+/// Save the API port to a configuration file
+fn save_api_port(port: u16) -> Result<()> {
+    use crate::config::get_config_dir;
+    use std::fs;
+    use std::io::Write;
+
+    let config_dir = get_config_dir();
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir)?;
+    }
+
+    let port_file_path = config_dir.join("api_port.txt");
+    let mut file = fs::File::create(port_file_path)?;
+    write!(file, "{}", port)?;
+
+    Ok(())
 }

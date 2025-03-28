@@ -2,13 +2,17 @@ use clap::{Parser, Subcommand};
 use crossterm::execute;
 use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::LeaveAlternateScreen;
+use scribe::daemon::get_api_server_port;
 use scribe::display_scribe_dashboard;
 use scribe::interactive_add;
 use scribe::server;
+use scribe::server::check_api_server_health;
+use scribe::server::diagnose_api_server;
+use scribe::start_daemon;
 use scribe::AddResult;
 use scribe::{
     add_snippet, daemon_status, delete_snippet, display_snippet_manager, is_daemon_running,
-    run_daemon_worker, start_daemon, stop_daemon, update_snippet,
+    run_daemon_worker, stop_daemon, update_snippet,
 };
 use std::env;
 use std::process;
@@ -50,19 +54,28 @@ enum Commands {
     },
     /// Add a new snippet interactively
     New,
-    /// Start the scribe daemon
-    Start,
+    /// Start the daemon and API server for UI
+    Start {
+        #[clap(long, short, default_value = "3000", help = "Port for the API server")]
+        port: u16,
+    },
     /// Stop the scribe daemon
     Stop,
     /// Check the status of the scribe daemon
     Status,
     /// List all the configs
     List,
-    /// Start the API server for the Electron UI
+    /// Start just the API server (without daemon) for the Electron UI
     Serve {
         #[clap(long, short, default_value = "3000", help = "Port to listen on")]
         port: u16,
     },
+    /// Show the API server port
+    Port,
+    /// Check if the API server is responsive
+    ApiStatus,
+    /// Diagnose API server issues
+    ApiDiagnose,
 }
 
 fn main() {
@@ -88,7 +101,10 @@ fn main() {
         Some(Commands::Update { shortcut, snippet }) => {
             update_snippet(&shortcut, snippet).map(|_| println!("Snippet updated successfully"))
         }
-        Some(Commands::Start) => start_daemon(),
+        Some(Commands::Start { port }) => {
+            // Start both the daemon and the API server
+            start_daemon(port)
+        }
         Some(Commands::Stop) => stop_daemon(),
         Some(Commands::Status) => daemon_status(),
         Some(Commands::New) => {
@@ -147,13 +163,36 @@ fn main() {
         }
         Some(Commands::List) => display_snippet_manager(),
         Some(Commands::Serve { port }) => {
-            // Start API server
-            tokio::runtime::Builder::new_multi_thread()
+            // Start API server only in a properly configured runtime
+            let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
-                .unwrap()
-                .block_on(async { server::start_api_server(port).await })
+                .unwrap();
+
+            // Block the current thread with the server
+            runtime.block_on(async {
+                println!("Starting standalone API server on port {}...", port);
+                server::start_api_server(port).await
+            })
         }
+        Some(Commands::Port) => match get_api_server_port() {
+            Ok(port) => {
+                println!("Scribe API server is running on port {}", port);
+                println!("UI available at: http://localhost:{}", port);
+                Ok(())
+            }
+            Err(_) => {
+                println!("Scribe API server port information not found.");
+                println!("The API server may not be running or was started without saving port information.");
+                println!("Try 'scribe status' for more details.");
+                Ok(())
+            }
+        },
+        Some(Commands::ApiStatus) => match check_api_server_health() {
+            Ok(()) => Ok(()),
+            Err(e) => Err(e),
+        },
+        Some(Commands::ApiDiagnose) => diagnose_api_server(),
         None => {
             // When no command is provided, launch the main UI
             display_main_ui()

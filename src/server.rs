@@ -3,7 +3,9 @@ use crate::api::{
     api_get_snippets, api_update_snippet,
 };
 use crate::error::Result;
+use crate::{get_config_dir, is_daemon_running, ScribeError};
 use serde::Deserialize;
+use std::fs;
 use std::net::SocketAddr;
 use warp::Filter;
 
@@ -25,8 +27,13 @@ struct GetSnippet {
 
 pub async fn start_api_server(port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    println!("Starting API server on http://{}", addr);
-
+    println!("┌─────────────────────────────────────────┐");
+    println!("│          Scribe API Server                                          |");
+    println!("├─────────────────────────────────────────┤");
+    println!("│ Status: Running                                                     |");
+    println!("│ Port:   {:<33} │", port);
+    println!("│ URL:    http://localhost:{:<21} │", port);
+    println!("└─────────────────────────────────────────┘");
     // CORS for development
     let cors = warp::cors()
         .allow_any_origin()
@@ -66,7 +73,7 @@ pub async fn start_api_server(port: u16) -> Result<()> {
 
     let daemon_details = warp::path!("api" / "daemon" / "details")
         .and(warp::get())
-        .map(|| warp::reply::json(&api_daemon_details()));
+        .map(move || warp::reply::json(&api_daemon_details(port)));
 
     // Health check endpoint
     let health = warp::path!("health").map(|| "Scribe API is running");
@@ -82,8 +89,243 @@ pub async fn start_api_server(port: u16) -> Result<()> {
         .or(health)
         .with(cors);
 
-    // Start the server
-    warp::serve(routes).run(addr).await;
+    // Use warp's TcpListener creation to handle binding errors gracefully
+    let server = warp::serve(routes).try_bind_with_graceful_shutdown(addr, async {
+        // Set up shutdown signal handler
+        tokio::signal::ctrl_c().await.ok();
+        println!("Received shutdown signal, stopping API server...");
+    });
+
+    match server {
+        Ok((addr, server)) => {
+            println!("API server started successfully on {}", addr);
+
+            // Actually run the server - this will block until shutdown
+            server.await;
+            Ok(())
+        }
+        Err(e) => Err(ScribeError::Other(format!(
+            "Failed to bind to port {}: {}",
+            port, e
+        ))),
+    }
+}
+
+pub async fn test_port_availability(port: u16) -> bool {
+    use std::net::TcpListener;
+
+    // Try to bind to the port to see if it's available
+    match TcpListener::bind(format!("127.0.0.1:{}", port)) {
+        Ok(_) => true,   // Port is available
+        Err(_) => false, // Port is in use or cannot be bound to
+    }
+}
+
+// Add a health check function
+pub fn check_api_server_health() -> Result<()> {
+    match crate::daemon::get_api_server_port() {
+        Ok(port) => {
+            println!("Checking API server on port {}...", port);
+
+            // Try to connect to the API server using standard TCP
+            match std::net::TcpStream::connect(format!("127.0.0.1:{}", port)) {
+                Ok(_) => {
+                    println!("✅ API server is running on port {}", port);
+                    println!("Connection successful (TCP port is open)");
+                    Ok(())
+                }
+                Err(e) => {
+                    println!("❌ Failed to connect to API server on port {}", port);
+                    println!("Error: {}", e);
+                    Err(ScribeError::Other(format!(
+                        "Failed to connect to API server: {}",
+                        e
+                    )))
+                }
+            }
+        }
+        Err(_) => {
+            println!("❌ API server port information not found");
+            println!(
+                "The API server may not be running or was started without saving port information."
+            );
+            Err(ScribeError::Other(
+                "API server port information not found".to_string(),
+            ))
+        }
+    }
+}
+
+/// Attempt to stop any running API server process
+pub fn stop_api_server() -> Result<()> {
+    // Try to get the port
+    if let Ok(port) = get_api_server_port() {
+        println!("Stopping API server on port {}...", port);
+
+        // Try to connect to signal shutdown
+        let _ = std::net::TcpStream::connect(format!("127.0.0.1:{}", port));
+
+        // Remove the port file
+        let port_file_path = get_config_dir().join("api_port.txt");
+        if port_file_path.exists() {
+            let _ = fs::remove_file(port_file_path);
+        }
+
+        println!("API server port file removed.");
+
+        // Try to kill processes listening on that port (platform-specific)
+        #[cfg(unix)]
+        {
+            use std::process::Command;
+            // Try using lsof to find and kill process using that port
+            let _ = Command::new("bash")
+                .arg("-c")
+                .arg(format!("lsof -ti:{} | xargs kill -9", port))
+                .status();
+        }
+
+        #[cfg(windows)]
+        {
+            use std::process::Command;
+            // Try using netstat and taskkill on Windows
+            let _ = Command::new("cmd")
+                .arg("/C")
+                .arg(format!("for /f \"tokens=5\" %a in ('netstat -aon ^| findstr :{} ^| findstr LISTENING') do taskkill /F /PID %a", port))
+                .status();
+        }
+    }
 
     Ok(())
+}
+
+pub fn diagnose_api_server() -> Result<()> {
+    println!("Scribe API Server Diagnostics");
+    println!("============================");
+
+    // Check if daemon is running
+    match is_daemon_running()? {
+        Some(pid) => println!("✅ Daemon is running with PID {}", pid),
+        None => println!("❌ Daemon is not running"),
+    }
+
+    // Check if port file exists
+    let port_file = crate::config::get_config_dir().join("api_port.txt");
+    if port_file.exists() {
+        println!("✅ API port file exists at {}", port_file.display());
+
+        // Check the port
+        match std::fs::read_to_string(&port_file) {
+            Ok(content) => {
+                match content.trim().parse::<u16>() {
+                    Ok(port) => {
+                        println!("✅ Port file contains valid port: {}", port);
+
+                        // Check if the port is in use
+                        match std::net::TcpStream::connect(format!("127.0.0.1:{}", port)) {
+                            Ok(_) => {
+                                println!("✅ API server is responsive on port {}", port);
+                                println!("✅ Server URL: http://localhost:{}", port);
+                            }
+                            Err(_) => {
+                                println!(
+                                    "❌ Port {} is not in use - API server may not be running",
+                                    port
+                                );
+
+                                // Check if the port is available
+                                if port_is_available(port) {
+                                    println!("✅ Port {} is available", port);
+                                    println!("ℹ️  You can start the API server with: scribe serve --port {}", port);
+                                } else {
+                                    println!(
+                                        "❌ Port {} is in use but not responding as API server",
+                                        port
+                                    );
+                                    println!(
+                                        "ℹ️  You may need to free this port or choose another one"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => println!("❌ Port file contains invalid port number"),
+                }
+            }
+            Err(e) => println!("❌ Failed to read port file: {}", e),
+        }
+    } else {
+        println!("❌ API port file does not exist at {}", port_file.display());
+        println!("ℹ️  API server may not have been started, or the file was deleted");
+    }
+
+    // Check API server logs if they exist
+    let log_file = crate::config::get_config_dir().join("api_server_log.txt");
+    if log_file.exists() {
+        println!("✅ API server log file exists at {}", log_file.display());
+
+        // Display the last few lines of the log
+        #[cfg(unix)]
+        {
+            use std::process::Command;
+            println!("\nLast 10 lines of API server log:");
+            let _ = Command::new("sh")
+                .arg("-c")
+                .arg(format!("tail -n 10 \"{}\"", log_file.display()))
+                .status();
+        }
+
+        #[cfg(windows)]
+        {
+            use std::process::Command;
+            println!("\nLast 5 lines of API server log:");
+            let _ = Command::new("cmd")
+                .arg("/C")
+                .arg(format!(
+                    "type \"{}\" | findstr /n . | findstr /r \"[1-5]:\"",
+                    log_file.display()
+                ))
+                .status();
+        }
+    } else {
+        println!(
+            "❌ API server log file does not exist at {}",
+            log_file.display()
+        );
+    }
+
+    println!("\nTo start the API server, you can run: scribe serve --port <port>");
+    println!("To restart daemon and API: scribe start");
+    println!("To stop all services: scribe stop");
+
+    Ok(())
+}
+
+/// Try to get the API server port from stored configuration
+pub fn get_api_server_port() -> Result<u16> {
+    use crate::config::get_config_dir;
+    use std::fs;
+    use std::io::Read;
+
+    let port_file_path = get_config_dir().join("api_port.txt");
+
+    if port_file_path.exists() {
+        let mut file = fs::File::open(port_file_path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        contents
+            .trim()
+            .parse::<u16>()
+            .map_err(|_| ScribeError::Other("Invalid port stored in configuration".to_string()))
+    } else {
+        Err(ScribeError::Other(
+            "API server port information not found".to_string(),
+        ))
+    }
+}
+
+/// Check if a port is available by trying to bind to it
+fn port_is_available(port: u16) -> bool {
+    use std::net::TcpListener;
+    TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok()
 }
