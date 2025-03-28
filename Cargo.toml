@@ -1,51 +1,23 @@
-[package]
-name = "scribe"
-version = "0.1.0"
-edition = "2021"
-authors = ["Gokul <@bahdotsh>"]
-description = "A text snippet expansion tool"
-license = "MIT"
-repository = "https://github.com/bahdotsh/scribe"
-readme = "README.md"
-keywords = ["snippet", "expansion", "productivity", "text", "automation"]
-categories = ["command-line-utilities", "text-processing"]
+[workspace]
+resolver = "2"
+members = [
+    "crates/scribe-cli",
+    "crates/scribe-core",
+    "crates/scribe-server",
+    "crates/scribe-ui",
+]
 
-# Define the library target
-[lib]
-name = "scribe"
-path = "src/lib.rs"
-
-# Define the binary target
-[[bin]]
-name = "scribe"
-path = "src/main.rs"
-
-[dependencies]
-# UI and terminal handling
-ratatui = "0.23.0"
-crossterm = "0.27.0"
-warp = "0.3"
-tokio = { version = "1", features = ["full"] }
-
-# CLI argument parsing
-clap = { version = "4.3.10", features = ["derive"] }
-
-# Serialization/deserialization
+[workspace.dependencies]
+# Shared dependencies
+clap = { version = "4.3", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# Date and time
-chrono = "0.4"
-
-# Keyboard and clipboard handling
-rdev = "0.5.2"
+chrono = { version = "0.4", features = ["serde"] }
+crossterm = "0.27"
+ratatui = "0.23"
+tokio = { version = "1.28", features = ["full"] }
+warp = "0.3"
+rdev = "0.5"
 enigo = "0.3.0"
 arboard = "3.2.0"
-
-# Platform-specific dependencies
-[target.'cfg(unix)'.dependencies]
-daemonize = "0.5.0"
-
-# Development dependencies (for tests, benchmarks, etc.)
-[dev-dependencies]
-tempfile = "3.8.0"
+thiserror = "1.0"

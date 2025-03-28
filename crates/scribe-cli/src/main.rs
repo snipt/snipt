@@ -1,20 +1,16 @@
 use clap::{Parser, Subcommand};
 use crossterm::execute;
-use crossterm::terminal::disable_raw_mode;
-use crossterm::terminal::LeaveAlternateScreen;
-use scribe::daemon::daemon_worker_entry;
-use scribe::display_scribe_dashboard;
-use scribe::interactive_add;
-use scribe::server;
-use scribe::server::check_api_server_health;
-use scribe::server::diagnose_api_server;
-use scribe::server::get_api_server_port;
-use scribe::start_daemon;
-use scribe::AddResult;
-use scribe::{
-    add_snippet, daemon_status, delete_snippet, display_snippet_manager, is_daemon_running,
-    run_daemon_worker, stop_daemon, update_snippet,
+use crossterm::terminal::{disable_raw_mode, LeaveAlternateScreen};
+
+// Imports from other crates
+use scribe_core::{add_snippet, delete_snippet, is_daemon_running, update_snippet, Result};
+use scribe_daemon::{
+    daemon_status, daemon_worker_entry, run_daemon_worker, start_daemon, stop_daemon,
 };
+use scribe_server::server::get_api_server_port;
+use scribe_server::{check_api_server_health, diagnose_api_server, start_api_server};
+use scribe_ui::{display_scribe_dashboard, display_snippet_manager, interactive_add, AddResult};
+
 use std::env;
 use std::process;
 
@@ -176,7 +172,7 @@ fn main() {
             // Block the current thread with the server
             runtime.block_on(async {
                 println!("Starting standalone API server on port {}...", port);
-                server::start_api_server(port).await
+                start_api_server(port).await
             })
         }
         Some(Commands::Port) => match get_api_server_port() {
@@ -211,7 +207,7 @@ fn main() {
     }
 }
 
-fn display_main_ui() -> scribe::Result<()> {
+fn display_main_ui() -> Result<()> {
     // First check if daemon is running
     let daemon_status = is_daemon_running()?;
 

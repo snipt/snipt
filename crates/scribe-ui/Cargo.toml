@@ -1,0 +1,10 @@
+[package]
+name = "scribe-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+scribe-core = { path = "../scribe-core" }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
+arboard = { workspace = true }

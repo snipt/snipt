@@ -1,13 +1,11 @@
-use crate::config::{
-    db_file_exists, ensure_config_dir, get_db_file_path, get_pid_file_path, is_daemon_running,
-};
-use crate::error::{Result, ScribeError};
-use crate::expansion::{process_expansion, replace_text};
-use crate::keyboard::rdev_key_to_char;
-use crate::server::{get_api_server_port, port_is_available, save_api_port, stop_api_server};
-use crate::storage::load_snippets;
-
 use rdev::{self, listen, EventType, Key as RdevKey};
+use scribe_core::config::{db_file_exists, ensure_config_dir, get_db_file_path, get_pid_file_path};
+use scribe_core::expansion::{process_expansion, replace_text};
+use scribe_core::keyboard::rdev_key_to_char;
+use scribe_core::{get_config_dir, is_daemon_running, load_snippets, Result, ScribeError};
+use scribe_server::server::{
+    get_api_server_port, port_is_available, save_api_port, stop_api_server,
+};
 use std::fs::{self, File};
 use std::io::Write;
 use std::process;
@@ -88,10 +86,7 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
             let current_exe = std::env::current_exe()?;
 
             // Start the daemon process detached with nohup
-            let daemon_log_file = format!(
-                "{}/daemon_log.txt",
-                crate::config::get_config_dir().to_string_lossy()
-            );
+            let daemon_log_file = format!("{}/daemon_log.txt", get_config_dir().to_string_lossy());
 
             let cmd = format!(
                 "nohup {} daemon-worker > {} 2>&1 &",
@@ -203,10 +198,7 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
     #[cfg(unix)]
     {
         use std::process::Command;
-        let log_file = format!(
-            "{}/api_server_log.txt",
-            crate::config::get_config_dir().to_string_lossy()
-        );
+        let log_file = format!("{}/api_server_log.txt", get_config_dir().to_string_lossy());
 
         let cmd = format!(
             "nohup {} serve --port {} > {} 2>&1 &",

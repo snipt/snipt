@@ -1,7 +1,3 @@
-use crate::config::is_daemon_running;
-use crate::error::{Result, ScribeError};
-use crate::models::SnippetEntry;
-use crate::storage::{delete_snippet, load_snippets, update_snippet};
 use crate::{interactive_add, AddResult};
 use arboard::Clipboard;
 use crossterm::{
@@ -16,6 +12,10 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
     Frame, Terminal,
+};
+use scribe_core::{
+    delete_snippet, is_daemon_running, load_snippets, update_snippet, Result, ScribeError,
+    SnippetEntry,
 };
 use std::io::{self, stdout};
 use std::thread;

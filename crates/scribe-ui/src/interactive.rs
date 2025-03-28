@@ -1,6 +1,3 @@
-use crate::storage::add_snippet;
-use crate::{error::Result, ScribeError};
-
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
@@ -8,6 +5,7 @@ use crossterm::{
     style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use scribe_core::{add_snippet, Result, ScribeError};
 use std::io::{self, stdout, Write};
 use std::time::{Duration, Instant};
 

@@ -1,7 +1,8 @@
-use crate::config::{get_db_file_path, is_daemon_running};
-use crate::models::SnippetEntry;
 use crate::server::get_api_server_port;
-use crate::storage::{add_snippet, delete_snippet, load_snippets, update_snippet};
+use scribe_core::{
+    add_snippet, config::get_db_file_path, delete_snippet, is_daemon_running, load_snippets,
+    update_snippet, SnippetEntry,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]

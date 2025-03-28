@@ -1,0 +1,10 @@
+[package]
+name = "scribe-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+scribe-core = { path = "../scribe-core" }
+serde = { workspace = true }
+tokio = { workspace = true }
+warp = { workspace = true }

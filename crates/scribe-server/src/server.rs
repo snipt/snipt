@@ -2,8 +2,8 @@ use crate::api::{
     api_add_snippet, api_daemon_details, api_daemon_status, api_delete_snippet, api_get_snippet,
     api_get_snippets, api_update_snippet,
 };
-use crate::error::Result;
-use crate::{get_config_dir, is_daemon_running, ScribeError};
+
+use scribe_core::{get_config_dir, is_daemon_running, Result, ScribeError};
 use serde::Deserialize;
 use std::fs;
 use std::net::SocketAddr;
@@ -209,7 +209,7 @@ pub fn diagnose_api_server() -> Result<()> {
     }
 
     // Check if port file exists
-    let port_file = crate::config::get_config_dir().join("api_port.txt");
+    let port_file = get_config_dir().join("api_port.txt");
     if port_file.exists() {
         println!("✅ API port file exists at {}", port_file.display());
 
@@ -259,7 +259,7 @@ pub fn diagnose_api_server() -> Result<()> {
     }
 
     // Check API server logs if they exist
-    let log_file = crate::config::get_config_dir().join("api_server_log.txt");
+    let log_file = get_config_dir().join("api_server_log.txt");
     if log_file.exists() {
         println!("✅ API server log file exists at {}", log_file.display());
 
@@ -302,7 +302,6 @@ pub fn diagnose_api_server() -> Result<()> {
 
 /// Try to get the API server port from stored configuration
 pub fn get_api_server_port() -> Result<u16> {
-    use crate::config::get_config_dir;
     use std::fs;
     use std::io::Read;
 
@@ -332,7 +331,6 @@ pub fn port_is_available(port: u16) -> bool {
 
 /// Save the API port to a configuration file
 pub fn save_api_port(port: u16) -> Result<()> {
-    use crate::config::get_config_dir;
     use std::fs;
     use std::io::Write;
 
