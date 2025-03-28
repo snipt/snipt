@@ -1,11 +1,10 @@
 
-# Scribe: Text Snippet Expansion Tool
+
 
 <div align="center">
 
-**Type less, say more. Text expansion that works everywhere.**
+# Scribe
 
-[![GitHub license](https://img.shields.io/github/license/snipt/scribe)](https://github.com/snipt/scribe/blob/main/LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.56+-orange.svg)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue.svg)]()
 
