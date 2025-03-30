@@ -1,4 +1,4 @@
-# snipt API Documentation
+# Snipt API Documentation
 
 This document outlines all available API endpoints for the snipt text expansion tool.
 

@@ -1,4 +1,4 @@
-# snipt CLI
+# Snipt CLI
 
 This crate provides the command-line interface for snipt, a text snippet expansion tool. It handles user commands for managing snippets, controlling the daemon, and launching the UI.
 
