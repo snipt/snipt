@@ -1555,60 +1555,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "scribe-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "crossterm",
- "scribe-core",
- "scribe-daemon",
- "scribe-server",
- "scribe-ui",
- "tokio",
-]
-
-[[package]]
-name = "scribe-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "enigo",
- "rdev",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "scribe-daemon"
-version = "0.1.0"
-dependencies = [
- "rdev",
- "scribe-core",
- "scribe-server",
-]
-
-[[package]]
-name = "scribe-server"
-version = "0.1.0"
-dependencies = [
- "scribe-core",
- "serde",
- "tokio",
- "warp",
-]
-
-[[package]]
-name = "scribe-ui"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "crossterm",
- "ratatui",
- "scribe-core",
-]
-
-[[package]]
 name = "serde"
 version = "1.0.219"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1719,6 +1665,60 @@ name = "smallvec"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fcf8323ef1faaee30a44a340193b1ac6814fd9b7b4e88e9d4519a3e4abe1cfd"
+
+[[package]]
+name = "snipt-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "crossterm",
+ "snipt-core",
+ "snipt-daemon",
+ "snipt-server",
+ "snipt-ui",
+ "tokio",
+]
+
+[[package]]
+name = "snipt-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "enigo",
+ "rdev",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "snipt-daemon"
+version = "0.1.0"
+dependencies = [
+ "rdev",
+ "snipt-core",
+ "snipt-server",
+]
+
+[[package]]
+name = "snipt-server"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "snipt-core",
+ "tokio",
+ "warp",
+]
+
+[[package]]
+name = "snipt-ui"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "crossterm",
+ "ratatui",
+ "snipt-core",
+]
 
 [[package]]
 name = "socket2"

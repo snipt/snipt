@@ -1,9 +1,0 @@
-[package]
-name = "scribe-daemon"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-scribe-core = { path = "../scribe-core" }
-scribe-server = { path = "../scribe-server" }
-rdev = { workspace = true }

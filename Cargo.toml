@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/scribe-cli",
-    "crates/scribe-core",
-    "crates/scribe-server",
-    "crates/scribe-ui",
+    "crates/snipt-cli",
+    "crates/snipt-core",
+    "crates/snipt-server",
+    "crates/snipt-ui",
 ]
 
 [workspace.dependencies]

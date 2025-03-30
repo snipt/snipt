@@ -1,0 +1,10 @@
+[package]
+name = "snipt-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+snipt-core = { path = "../snipt-core" }
+serde = { workspace = true }
+tokio = { workspace = true }
+warp = { workspace = true }

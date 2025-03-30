@@ -1,6 +1,6 @@
 <div align="center">
 
-# Scribe
+# Snipt
 
 [![Rust Version](https://img.shields.io/badge/rust-1.56+-orange.svg)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue.svg)]()
@@ -10,7 +10,7 @@
 ---
 ## 🚀 Overview
 
-Scribe is a powerful text snippet expansion tool that boosts your productivity by replacing short text shortcuts with longer content. Just type a prefix (like `:`) followed by your shortcut, and Scribe automatically expands it into your predefined text.
+snipt is a powerful text snippet expansion tool that boosts your productivity by replacing short text shortcuts with longer content. Just type a prefix (like `:`) followed by your shortcut, and snipt automatically expands it into your predefined text.
 
 ## ✨ Key Features
 
@@ -29,9 +29,9 @@ Scribe is a powerful text snippet expansion tool that boosts your productivity b
 # 1. Install Rust if needed (https://rustup.rs/)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# 2. Clone and build Scribe
-git clone https://github.com/bahdotsh/scribe.git
-cd scribe
+# 2. Clone and build snipt
+git clone https://github.com/bahdotsh/snipt.git
+cd snipt
 cargo build --release
 
 # 3. Install the binary (optional)
@@ -40,43 +40,43 @@ cargo install --path .
 
 ## 🎮 Usage
 
-### Starting Scribe
+### Starting snipt
 
 ```bash
 # Launch interactive UI
-scribe
+snipt
 
 # Start the daemon (required for expansion)
-scribe start
+snipt start
 ```
 
 ### Managing Snippets
 
 ```bash
 # Add a snippet
-scribe add --shortcut hello --snippet "Hello, world!"
+snipt add --shortcut hello --snippet "Hello, world!"
 
 # Add interactively
-scribe new
+snipt new
 
 # View and manage all snippets
-scribe list
+snipt list
 
 # Remove a snippet
-scribe delete --shortcut hello
+snipt delete --shortcut hello
 
 # Update existing snippet
-scribe update --shortcut hello --snippet "Hello there, world!"
+snipt update --shortcut hello --snippet "Hello there, world!"
 ```
 
 ### Monitoring & Control
 
 ```bash
 # Check daemon status
-scribe status
+snipt status
 
 # Stop the daemon
-scribe stop
+snipt stop
 ```
 
 ## 💡 How Expansion Works
@@ -93,11 +93,11 @@ This instantly expands to "Hello, world!" (or your custom text).
 
 <div align="center">
 
-![Scribe TUI Screenshot](assets/images/scribe-tui-screenshot.png)
+![snipt TUI Screenshot](assets/images/snipt-tui-screenshot.png)
 
 </div>
 
-Launch the beautiful terminal UI with either `scribe` or `scribe list`.
+Launch the beautiful terminal UI with either `snipt` or `snipt list`.
 
 ### Navigation
 
@@ -112,18 +112,18 @@ Launch the beautiful terminal UI with either `scribe` or `scribe list`.
 
 ## ⚙️ Configuration
 
-Scribe stores your data in `~/.scribe/`:
+snipt stores your data in `~/.snipt/`:
 
-- `scribe.json`: Your snippet database
-- `scribe-daemon.pid`: Process ID of running daemon
+- `snipt.json`: Your snippet database
+- `snipt-daemon.pid`: Process ID of running daemon
 
 ## 🧩 Architecture
 
-Scribe consists of several components:
+snipt consists of several components:
 
 - **Core Library**: Handles snippet management and persistence
 - **Daemon**: Background process that listens for keyboard events
-- **CLI**: Command-line interface for controlling Scribe
+- **CLI**: Command-line interface for controlling snipt
 - **TUI**: Terminal user interface for snippet management
 - **Server**: HTTP API for potential GUI clients
 

@@ -1,0 +1,10 @@
+[package]
+name = "snipt-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+snipt-core = { path = "../snipt-core" }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
+arboard = { workspace = true }

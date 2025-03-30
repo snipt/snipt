@@ -1,0 +1,9 @@
+[package]
+name = "snipt-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+snipt-core = { path = "../snipt-core" }
+snipt-server = { path = "../snipt-server" }
+rdev = { workspace = true }

@@ -1,0 +1,18 @@
+[package]
+name = "snipt-cli"
+version = "0.1.0"
+edition = "2021"
+
+# This crate produces the main binary
+[[bin]]
+name = "snipt"
+path = "src/main.rs"
+
+[dependencies]
+snipt-core = { path = "../snipt-core" }
+snipt-server = { path = "../snipt-server" }
+snipt-ui = { path = "../snipt-ui" }
+snipt-daemon = { path = "../snipt-daemon" }
+clap = { workspace = true }
+tokio = { workspace = true }
+crossterm = { workspace = true }
