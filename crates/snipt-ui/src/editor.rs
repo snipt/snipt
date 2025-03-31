@@ -6,14 +6,17 @@ use crossterm::{
     terminal::{self, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use snipt_core::{add_snippet, Result, SniptError};
-use std::io::{self, stdout, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+use std::{
+    io::{self, stdout, Write},
+    thread,
+};
 
 // Constants
 const MAX_LINES: usize = 10000;
 const MAX_LINE_LENGTH: usize = 5000;
 const MAX_SHORTCUT_LENGTH: usize = 50;
-const RENDER_THRESHOLD: Duration = Duration::from_millis(33); // Limit rendering frequency
 
 #[derive(PartialEq, Copy, Clone)]
 enum EditorMode {
@@ -78,6 +81,23 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
     let mut last_render = Instant::now();
     let mut force_render = true;
 
+    // Initial draw to set up the UI
+    if let Err(e) = draw_ui(
+        stdout,
+        &shortcut,
+        &snippet,
+        current_field,
+        cursor_pos,
+        current_line,
+        editor_mode,
+        error_message.as_deref(),
+    ) {
+        error_message = Some(format!("UI Error: {}. Using minimal mode.", e));
+    }
+
+    // Much shorter rendering interval - decreased to prevent flickering
+    const RENDER_THRESHOLD: Duration = Duration::from_millis(16); // ~60fps (smoother)
+
     loop {
         // Limit rendering frequency for better performance
         let now = Instant::now();
@@ -126,13 +146,14 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
             force_render = false;
         }
 
-        // Handle UI events
-        if crossterm::event::poll(Duration::from_millis(16))? {
+        // Handle UI events with a very short timeout to remain responsive
+        if crossterm::event::poll(Duration::from_millis(1))? {
             match event::read() {
                 Ok(Event::Key(KeyEvent {
                     code, modifiers, ..
                 })) => {
-                    force_render = true; // Force render on key input
+                    // Only force render when the state actually changes
+                    let mut state_changed = false;
 
                     // Special handling for paste mode
                     if editor_mode == EditorMode::Paste {
@@ -154,12 +175,17 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                                     paste_buffer.clear();
                                 }
                                 editor_mode = EditorMode::Insert;
+                                state_changed = true;
                             }
                             KeyCode::Char(c) => {
                                 // Add to paste buffer
                                 paste_buffer.push(c);
+                                // Don't redraw for each character in paste mode
                             }
                             _ => {}
+                        }
+                        if state_changed {
+                            force_render = true;
                         }
                         continue;
                     }
@@ -171,12 +197,15 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                                 current_field = 1;
                                 current_line = 0;
                                 cursor_pos = snippet[current_line].len();
+                                state_changed = true;
                             } else if modifiers.contains(KeyModifiers::SHIFT) {
                                 current_field = 0;
                                 cursor_pos = shortcut.len();
+                                state_changed = true;
                             } else if current_line < snippet.len() - 1 {
                                 current_line += 1;
                                 cursor_pos = snippet[current_line].len().min(cursor_pos);
+                                state_changed = true;
                             }
                         }
                         KeyCode::BackTab | KeyCode::Up => {
@@ -184,14 +213,16 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                                 if current_line > 0 {
                                     current_line -= 1;
                                     cursor_pos = snippet[current_line].len().min(cursor_pos);
+                                    state_changed = true;
                                 } else {
                                     current_field = 0;
                                     cursor_pos = shortcut.len();
+                                    state_changed = true;
                                 }
                             }
                         }
                         KeyCode::Esc => {
-                            // **IMPORTANT CHANGE**: Check for empty fields and return false to indicate cancel
+                            // Check for empty fields and return false to indicate cancel
                             if shortcut.is_empty() && (snippet.len() == 1 && snippet[0].is_empty())
                             {
                                 return Ok(false);
@@ -201,45 +232,38 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                                 return Ok(snippet_added);
                             } else {
                                 editor_mode = EditorMode::Normal;
+                                state_changed = true;
                             }
                         }
                         KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
                             // Enter paste mode
                             editor_mode = EditorMode::Paste;
                             paste_buffer.clear();
-                            // Show paste indicator
-                            if let Err(_) = execute!(
-                                stdout,
-                                cursor::MoveTo(0, 0),
-                                SetForegroundColor(Color::Green),
-                                Print(
-                                    "PASTE MODE: Type or paste text, then press Enter to confirm"
-                                ),
-                                ResetColor
-                            ) {
-                                // Non-critical error
-                            }
+                            state_changed = true;
                         }
 
                         _ => {
                             if current_field == 0 {
                                 // Shortcut field handling
-                                handle_shortcut_input(
+                                if handle_shortcut_input(
                                     &mut shortcut,
                                     &mut cursor_pos,
                                     code,
                                     modifiers,
-                                )?;
+                                )? {
+                                    state_changed = true;
+                                }
                                 if code == KeyCode::Enter {
                                     current_field = 1;
                                     current_line = 0;
                                     cursor_pos = snippet[current_line].len();
+                                    state_changed = true;
                                 }
                             } else {
                                 // Snippet field handling with vim-like modes
                                 match editor_mode {
                                     EditorMode::Normal => {
-                                        handle_normal_mode(
+                                        if handle_normal_mode(
                                             &mut snippet,
                                             &mut cursor_pos,
                                             &mut current_line,
@@ -249,10 +273,12 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                                             stdout,
                                             &shortcut,
                                             &mut snippet_added,
-                                        )?;
+                                        )? {
+                                            state_changed = true;
+                                        }
                                     }
                                     EditorMode::Insert => {
-                                        handle_insert_mode(
+                                        if handle_insert_mode(
                                             &mut snippet,
                                             &mut cursor_pos,
                                             &mut current_line,
@@ -262,21 +288,33 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                                             stdout,
                                             &shortcut,
                                             &mut snippet_added,
-                                        )?;
+                                        )? {
+                                            state_changed = true;
+                                        }
                                     }
                                     EditorMode::Paste => { /* Handled above */ }
                                 }
                             }
                         }
                     }
+
+                    // Only redraw if state actually changed
+                    if state_changed {
+                        force_render = true;
+                    }
                 }
                 Err(e) => {
                     error_message = Some(format!("Input error: {}. Press any key to continue.", e));
                     thread_sleep(1000);
+                    force_render = true;
                 }
                 _ => {}
             }
+        } else {
+            // Small sleep to prevent CPU usage when idle
+            thread::sleep(Duration::from_millis(1));
         }
+
         if snippet_added {
             return Ok(true);
         }
@@ -345,11 +383,12 @@ fn handle_shortcut_input(
     cursor_pos: &mut usize,
     code: KeyCode,
     _modifiers: KeyModifiers,
-) -> Result<()> {
+) -> Result<bool> {
+    let mut state_changed = false;
     match code {
         KeyCode::Enter => {
             // Return true to indicate field change
-            return Ok(());
+            return Ok(true);
         }
         KeyCode::Backspace => {
             if *cursor_pos > 0 {
@@ -362,6 +401,7 @@ fn handle_shortcut_input(
                     chars.remove(cursor_char_pos - 1);
                     *shortcut = chars.into_iter().collect();
                     *cursor_pos -= 1;
+                    state_changed = true;
                 }
             }
         }
@@ -374,24 +414,29 @@ fn handle_shortcut_input(
                 // Remove character at cursor
                 chars.remove(cursor_char_pos);
                 *shortcut = chars.into_iter().collect();
+                state_changed = true;
             }
         }
         KeyCode::Left => {
             if *cursor_pos > 0 {
                 *cursor_pos -= 1;
+                state_changed = true;
             }
         }
         KeyCode::Right => {
             let char_count = shortcut.chars().count();
             if *cursor_pos < char_count {
                 *cursor_pos += 1;
+                state_changed = true;
             }
         }
         KeyCode::Home => {
             *cursor_pos = 0;
+            state_changed = true;
         }
         KeyCode::End => {
             *cursor_pos = shortcut.chars().count(); // Count chars, not bytes
+            state_changed = true;
         }
         KeyCode::Char(c) => {
             if shortcut.len() < MAX_SHORTCUT_LENGTH {
@@ -405,12 +450,13 @@ fn handle_shortcut_input(
                 // Convert back to string
                 *shortcut = chars.into_iter().collect();
                 *cursor_pos += 1;
+                state_changed = true;
             }
         }
         _ => {}
     }
 
-    Ok(())
+    Ok(state_changed)
 }
 
 fn handle_normal_mode(
@@ -423,10 +469,12 @@ fn handle_normal_mode(
     stdout: &mut io::Stdout,
     shortcut: &str,
     snippet_added: &mut bool,
-) -> Result<()> {
+) -> Result<bool> {
+    let mut state_changed = false;
     match code {
         KeyCode::Char('i') => {
             *editor_mode = EditorMode::Insert;
+            state_changed = true;
         }
         KeyCode::Char('a') => {
             if *cursor_pos < snippet[*current_line].len() {
@@ -435,10 +483,12 @@ fn handle_normal_mode(
                     .min(snippet[*current_line].len());
             }
             *editor_mode = EditorMode::Insert;
+            state_changed = true;
         }
         KeyCode::Char('A') => {
             *cursor_pos = snippet[*current_line].len();
             *editor_mode = EditorMode::Insert;
+            state_changed = true;
         }
         KeyCode::Char('o') => {
             if snippet.len() < MAX_LINES {
@@ -446,6 +496,7 @@ fn handle_normal_mode(
                 *current_line += 1;
                 *cursor_pos = 0;
                 *editor_mode = EditorMode::Insert;
+                state_changed = true;
             }
         }
         KeyCode::Char('O') => {
@@ -453,6 +504,7 @@ fn handle_normal_mode(
                 snippet.insert(*current_line, String::new());
                 *cursor_pos = 0;
                 *editor_mode = EditorMode::Insert;
+                state_changed = true;
             }
         }
         KeyCode::Char('h') => {
@@ -460,9 +512,11 @@ fn handle_normal_mode(
                 *cursor_pos = find_prev_char_boundary(&snippet[*current_line], *cursor_pos)
                     .unwrap_or(*cursor_pos - 1)
                     .min(*cursor_pos);
+                state_changed = true;
             } else if *current_line > 0 {
                 *current_line -= 1;
                 *cursor_pos = snippet[*current_line].len();
+                state_changed = true;
             }
         }
         KeyCode::Char('l') => {
@@ -470,28 +524,34 @@ fn handle_normal_mode(
                 *cursor_pos = find_next_char_boundary(&snippet[*current_line], *cursor_pos)
                     .unwrap_or(*cursor_pos + 1)
                     .min(snippet[*current_line].len());
+                state_changed = true;
             } else if *current_line < snippet.len() - 1 {
                 *current_line += 1;
                 *cursor_pos = 0;
+                state_changed = true;
             }
         }
         KeyCode::Char('j') => {
             if *current_line < snippet.len() - 1 {
                 *current_line += 1;
                 *cursor_pos = (*cursor_pos).min(snippet[*current_line].len());
+                state_changed = true;
             }
         }
         KeyCode::Char('k') => {
             if *current_line > 0 {
                 *current_line -= 1;
                 *cursor_pos = (*cursor_pos).min(snippet[*current_line].len());
+                state_changed = true;
             }
         }
         KeyCode::Char('0') => {
             *cursor_pos = 0;
+            state_changed = true;
         }
         KeyCode::Char('$') => {
             *cursor_pos = snippet[*current_line].len();
+            state_changed = true;
         }
         KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
             if snippet.len() > 1 {
@@ -500,21 +560,23 @@ fn handle_normal_mode(
                     *current_line = snippet.len() - 1;
                 }
                 *cursor_pos = (*cursor_pos).min(snippet[*current_line].len());
+                state_changed = true;
             } else {
                 snippet[0].clear();
                 *cursor_pos = 0;
+                state_changed = true;
             }
         }
         KeyCode::Enter => {
             if let Ok(added) = submit_snippet(stdout, shortcut, snippet) {
                 *snippet_added = added;
             }
-            return Ok(());
+            return Ok(true);
         }
         _ => {}
     }
 
-    Ok(())
+    Ok(state_changed)
 }
 
 // Handle insert mode input
@@ -528,15 +590,17 @@ fn handle_insert_mode(
     stdout: &mut io::Stdout,
     shortcut: &str,
     snippet_added: &mut bool,
-) -> Result<()> {
+) -> Result<bool> {
+    let mut state_changed = false;
     match code {
         KeyCode::Esc => {
             // Check if both fields are empty - if so, return false for "canceled"
             if shortcut.is_empty() && (snippet.len() == 1 && snippet[0].is_empty()) {
                 *snippet_added = false;
-                return Ok(());
+                return Ok(true);
             }
             *editor_mode = EditorMode::Normal;
+            state_changed = true;
         }
         KeyCode::Enter => {
             if snippet.len() < MAX_LINES {
@@ -555,13 +619,14 @@ fn handle_insert_mode(
                 snippet.insert(*current_line + 1, after);
                 *current_line += 1;
                 *cursor_pos = 0;
+                state_changed = true;
             }
         }
         KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
             if let Ok(added) = submit_snippet(stdout, shortcut, snippet) {
                 *snippet_added = added;
             }
-            return Ok(());
+            return Ok(true);
         }
         KeyCode::Backspace => {
             if *cursor_pos > 0 {
@@ -574,6 +639,7 @@ fn handle_insert_mode(
                     chars.remove(cursor_char_pos - 1);
                     snippet[*current_line] = chars.into_iter().collect();
                     *cursor_pos -= 1;
+                    state_changed = true;
                 }
             } else if *current_line > 0 {
                 // At start of line, merge with previous line
@@ -581,6 +647,7 @@ fn handle_insert_mode(
                 *current_line -= 1;
                 *cursor_pos = snippet[*current_line].chars().count(); // Important: count chars, not bytes
                 snippet[*current_line].push_str(&content);
+                state_changed = true;
             }
         }
         KeyCode::Delete => {
@@ -592,29 +659,35 @@ fn handle_insert_mode(
                 // Remove character at cursor
                 chars.remove(cursor_char_pos);
                 snippet[*current_line] = chars.into_iter().collect();
+                state_changed = true;
             } else if *current_line < snippet.len() - 1 {
                 // At end of line, merge with next line
                 let next = snippet.remove(*current_line + 1);
                 snippet[*current_line].push_str(&next);
+                state_changed = true;
             }
         }
         KeyCode::Left => {
             if *cursor_pos > 0 {
                 *cursor_pos -= 1;
+                state_changed = true;
             } else if *current_line > 0 {
                 // Move to end of previous line
                 *current_line -= 1;
                 *cursor_pos = snippet[*current_line].chars().count(); // Count chars, not bytes
+                state_changed = true;
             }
         }
         KeyCode::Right => {
             let char_count = snippet[*current_line].chars().count();
             if *cursor_pos < char_count {
                 *cursor_pos += 1;
+                state_changed = true;
             } else if *current_line < snippet.len() - 1 {
                 // Move to start of next line
                 *current_line += 1;
                 *cursor_pos = 0;
+                state_changed = true;
             }
         }
         KeyCode::Up => {
@@ -622,6 +695,7 @@ fn handle_insert_mode(
                 *current_line -= 1;
                 let char_count = snippet[*current_line].chars().count();
                 *cursor_pos = (*cursor_pos).min(char_count);
+                state_changed = true;
             }
         }
         KeyCode::Down => {
@@ -629,13 +703,16 @@ fn handle_insert_mode(
                 *current_line += 1;
                 let char_count = snippet[*current_line].chars().count();
                 *cursor_pos = (*cursor_pos).min(char_count);
+                state_changed = true;
             }
         }
         KeyCode::Home => {
             *cursor_pos = 0;
+            state_changed = true;
         }
         KeyCode::End => {
             *cursor_pos = snippet[*current_line].chars().count(); // Count chars, not bytes
+            state_changed = true;
         }
         KeyCode::Tab => {
             // Insert 4 spaces for tab
@@ -651,6 +728,7 @@ fn handle_insert_mode(
                     // Convert back to string
                     snippet[*current_line] = chars.into_iter().collect();
                     *cursor_pos += 1;
+                    state_changed = true;
                 }
             }
         }
@@ -666,12 +744,13 @@ fn handle_insert_mode(
                 // Convert back to string
                 snippet[*current_line] = chars.into_iter().collect();
                 *cursor_pos += 1;
+                state_changed = true;
             }
         }
         _ => {}
     }
 
-    Ok(())
+    Ok(state_changed)
 }
 
 // Helper to submit a snippet
@@ -709,6 +788,9 @@ fn draw_ui(
     editor_mode: EditorMode,
     error_msg: Option<&str>,
 ) -> Result<()> {
+    // Use a static AtomicBool for tracking first draw
+    static FIRST_DRAW: AtomicBool = AtomicBool::new(true);
+
     // Get terminal size safely
     let (width, height) = match terminal::size() {
         Ok((w, h)) => (w, h),
@@ -734,13 +816,18 @@ fn draw_ui(
     let start_x = (width - panel_width) / 2; // Center horizontally
     let start_y = (height - panel_height) / 2; // Center vertically
 
-    // Clear the screen once at the beginning
-    if let Err(e) = execute!(
-        stdout,
-        terminal::Clear(ClearType::All),
-        cursor::Hide // Hide cursor during drawing to reduce flicker
-    ) {
-        return Err(SniptError::Other(format!("Failed to clear screen: {}", e)));
+    // Clear the screen only on first draw - using atomic compare_exchange for thread safety
+    if FIRST_DRAW
+        .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+    {
+        if let Err(e) = execute!(
+            stdout,
+            terminal::Clear(ClearType::All),
+            cursor::Hide // Hide cursor during drawing to reduce flicker
+        ) {
+            return Err(SniptError::Other(format!("Failed to clear screen: {}", e)));
+        }
     }
 
     // Calculate title based on current mode

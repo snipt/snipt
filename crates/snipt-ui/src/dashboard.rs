@@ -12,7 +12,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph},
     Terminal,
 };
 use snipt_core::{is_daemon_running, Result};
@@ -49,7 +49,6 @@ pub fn display_snipt_dashboard(daemon_status: Option<u32>) -> Result<()> {
 
     result
 }
-
 fn run_dashboard(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut DashboardState,
@@ -61,8 +60,7 @@ fn run_dashboard(
     let mut last_render = std::time::Instant::now();
     const RENDER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33); // ~30fps
     let mut force_render = true; // Force initial render
-
-    // Initial draw to prevent flickering on first render
+                                 // Initial draw to prevent flickering on first render
     terminal.draw(|_| {})?;
 
     while !state.exiting {
@@ -72,15 +70,15 @@ fn run_dashboard(
             terminal.draw(|f| {
                 let size = f.size();
 
-                // Create main layout
+                // Create main layout with better proportions
                 let main_chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(3),  // Title area
-                        Constraint::Length(10), // Logo/banner area
-                        Constraint::Length(6),  // Status area with start/stop instructions
-                        Constraint::Min(8),     // Actions area
-                        Constraint::Length(2),  // Help text
+                        Constraint::Length(3), // Title area
+                        Constraint::Length(5), // Logo area
+                        Constraint::Length(5), // Status area
+                        Constraint::Min(6),    // Actions area - reduced minimum height
+                        Constraint::Length(2), // Help text
                     ])
                     .split(size);
 
@@ -96,49 +94,47 @@ fn run_dashboard(
                     .block(Block::default().borders(Borders::ALL));
                 f.render_widget(title, main_chunks[0]);
 
-                // ASCII art logo/banner for visual appeal
+                // ASCII art logo - using a more compact version
                 let logo = vec![
                     "  ██████  ███▄    █  ██▓ ██▓███  ▄▄▄█████▓",
                     "▒██    ▒  ██ ▀█   █ ▓██▒▓██░  ██▒▓  ██▒ ▓▒",
                     "░ ▓██▄   ▓██  ▀█ ██▒▒██▒▓██░ ██▓▒▒ ▓██░ ▒░",
                     "  ▒   ██▒▓██▒  ▐▌██▒░██░▒██▄█▓▒ ▒░ ▓██▓ ░ ",
                     "▒██████▒▒▒██░   ▓██░░██░▒██▒ ░  ░  ▒██▒ ░ ",
-                    "▒ ▒▓▒ ▒ ░░ ▒░   ▒ ▒ ░▓  ▒▓▒░ ░  ░  ▒ ░░   ",
-                    "░ ░▒  ░ ░░ ░░   ░ ▒░ ▒ ░░▒ ░         ░    ",
                 ];
 
                 let logo_text: Vec<Line> = logo
                     .iter()
                     .map(|line| {
-                        Line::from(Span::styled(
-                            *line, // Use *line instead of line to dereference it
-                            Style::default().fg(Color::Magenta),
-                        ))
+                        Line::from(Span::styled(*line, Style::default().fg(Color::Magenta)))
                     })
                     .collect();
 
                 let logo_widget = Paragraph::new(logo_text).alignment(Alignment::Center);
                 f.render_widget(logo_widget, main_chunks[1]);
 
-                // Draw daemon status with clear start/stop instructions
+                // Draw daemon status
                 let status_text = match state.daemon_status {
                     Some(pid) => {
                         vec![
                             Line::from(vec![
                                 Span::styled("Status: ", Style::default().fg(Color::White)),
-                                Span::styled("● ", Style::default().fg(Color::Green)), // Green dot
+                                Span::styled("● ", Style::default().fg(Color::Green)),
                                 Span::styled("RUNNING", Style::default().fg(Color::Green)),
                                 Span::styled(
                                     format!(" (PID: {})", pid),
                                     Style::default().fg(Color::DarkGray),
                                 ),
                             ]),
-                            Line::from(""),
                             Line::from(vec![
                                 Span::raw("To "),
                                 Span::styled("stop", Style::default().fg(Color::Red)),
                                 Span::raw(" the daemon, run: "),
                                 Span::styled("snipt stop", Style::default().fg(Color::Yellow)),
+                            ]),
+                            Line::from(vec![
+                                Span::styled("⚠️  ", Style::default().fg(Color::Yellow)),
+                                Span::raw("The daemon must be running for text expansion to work"),
                             ]),
                         ]
                     }
@@ -146,33 +142,24 @@ fn run_dashboard(
                         vec![
                             Line::from(vec![
                                 Span::styled("Status: ", Style::default().fg(Color::White)),
-                                Span::styled("● ", Style::default().fg(Color::Red)), // Red dot
+                                Span::styled("● ", Style::default().fg(Color::Red)),
                                 Span::styled("STOPPED", Style::default().fg(Color::Red)),
                             ]),
-                            Line::from(""),
                             Line::from(vec![
                                 Span::raw("To "),
                                 Span::styled("start", Style::default().fg(Color::Green)),
                                 Span::raw(" the daemon, run: "),
                                 Span::styled("snipt start", Style::default().fg(Color::Yellow)),
                             ]),
+                            Line::from(vec![
+                                Span::styled("⚠️  ", Style::default().fg(Color::Yellow)),
+                                Span::raw("The daemon must be running for text expansion to work"),
+                            ]),
                         ]
                     }
                 };
 
-                // Add explanation of daemon's purpose
-                let daemon_explanation = vec![
-                    Line::from(""),
-                    Line::from(vec![
-                        Span::styled("⚠️  ", Style::default().fg(Color::Yellow)),
-                        Span::raw("The daemon must be running for text expansion to work"),
-                    ]),
-                ];
-
-                let mut all_status_text = status_text;
-                all_status_text.extend(daemon_explanation);
-
-                let status = Paragraph::new(all_status_text)
+                let status = Paragraph::new(status_text)
                     .style(Style::default())
                     .alignment(Alignment::Center)
                     .block(
@@ -182,85 +169,131 @@ fn run_dashboard(
                     );
                 f.render_widget(status, main_chunks[2]);
 
-                let action_area = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(2), // Top gap
-                        Constraint::Min(8),    // Action list area
-                    ])
-                    .split(main_chunks[3]);
+                // Action area with elegant minimalistic design
+                let action_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Actions ")
+                    .title_alignment(Alignment::Center);
 
-                // Calculate dimensions for a well-spaced list
-                let list_area = action_area[1];
-                let available_width = list_area.width;
-                let list_width = (available_width as f32 * 0.5).round() as u16; // 50% of width for better readability
-                let list_x = (available_width - list_width) / 2; // Center horizontally
+                let action_area = action_block.inner(main_chunks[3]);
+                f.render_widget(action_block, main_chunks[3]);
 
-                let list_rect = Rect {
-                    x: list_area.x + list_x,
-                    y: list_area.y,
-                    width: list_width,
-                    height: (actions.len() * 3) as u16 + 2, // More height for spacing (3 rows per item + borders)
+                // Create visually rich action buttons with distinctive styling
+                let action_styles = vec![
+                    (Color::Cyan, "📁", "Manage your snippet collection"),
+                    (Color::Green, "✨", "Create a new text expansion snippet"),
+                ];
+
+                // More compact button design
+                let button_height = 2; // Reduced from 3 to 2
+                let actions_count = actions.len() as u16;
+
+                // Calculate precise vertical positioning to eliminate gaps
+                let total_height = action_area.height;
+                let total_content_height = actions_count * button_height;
+
+                // Distribute buttons evenly with no extra space
+                let position_offset = if total_height > total_content_height {
+                    (total_height - total_content_height) / 2
+                } else {
+                    0
                 };
 
-                // Create list items with center alignment and larger text
-                let items: Vec<ListItem> = actions
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &action)| {
-                        let is_selected = i == state.selected_action;
-                        let color = match i {
-                            0 => Color::Cyan,
-                            1 => Color::Green,
-                            _ => Color::White,
-                        };
+                for (i, &action) in actions.iter().enumerate() {
+                    let is_selected = i == state.selected_action;
+                    let (color, icon, description) = action_styles[i];
+                    let i = i as u16;
 
-                        // Calculate padding for centering text manually
-                        let action_len = action.len();
-                        let available_width = list_width as usize - 6; // Subtract some space for borders and indicator
-                        let left_padding = (available_width.saturating_sub(action_len)) / 2;
-                        let padding = " ".repeat(left_padding);
+                    // Precise button positioning
+                    let button_y = action_area.y + position_offset + (i * button_height);
 
-                        // Create styled line with larger text (using symbols for emphasis)
-                        let prefix = if is_selected { ">" } else { " " };
+                    // Enhanced button styling
+                    let button_style = Style::default()
+                        .fg(if is_selected { color } else { Color::DarkGray })
+                        .add_modifier(if is_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        });
 
-                        // Use empty lines for better spacing between items
-                        let item = ListItem::new(vec![
-                            // Empty line above for spacing
-                            Line::from(""),
-                            // Main content line - centered manually with padding
-                            Line::from(vec![
-                                Span::raw(padding), // Add padding for centering
-                                Span::styled(
-                                    format!("{} ", prefix),
-                                    Style::default().fg(color).add_modifier(Modifier::BOLD),
-                                ),
-                                Span::styled(
-                                    action,
-                                    Style::default()
-                                        .fg(if is_selected { color } else { Color::White })
-                                        // Add bold for larger appearance
-                                        .add_modifier(Modifier::BOLD),
-                                ),
-                            ]),
-                            // Empty line below for spacing
-                            Line::from(""),
-                        ]);
+                    // Wider buttons for better aesthetics
+                    let button_area = Rect {
+                        x: action_area.x + 2, // Reduced left margin
+                        y: button_y,
+                        width: action_area.width.saturating_sub(4), // Wider buttons
+                        height: button_height,
+                    };
 
-                        item
-                    })
-                    .collect();
+                    // Elegant border style with gradient effects for selected items
+                    let button_block = Block::default()
+                        .borders(if is_selected {
+                            Borders::ALL
+                        } else {
+                            Borders::NONE
+                        })
+                        .border_style(Style::default().fg(color))
+                        .style(Style::default().bg(if is_selected {
+                            Color::DarkGray
+                        } else {
+                            Color::Reset
+                        }));
 
-                let actions_list = List::new(items)
-                    .block(
-                        Block::default()
-                            .borders(Borders::NONE) // Remove borders for cleaner look
-                            .title_alignment(Alignment::Center),
-                    )
-                    .highlight_style(Style::default().add_modifier(Modifier::BOLD))
-                    .style(Style::default()); // Base style
+                    f.render_widget(button_block, button_area);
 
-                f.render_widget(actions_list, list_rect);
+                    // More compact button content layout
+                    let inner_area = Rect {
+                        x: button_area.x + 1,
+                        y: button_area.y,
+                        width: button_area.width.saturating_sub(2),
+                        height: button_area.height,
+                    };
+
+                    // Combined button text and description for more compact display
+                    let button_text = vec![Line::from(vec![
+                        Span::styled(
+                            format!("{} {} ", icon, action),
+                            button_style.add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("- {}", description),
+                            Style::default().fg(if is_selected {
+                                Color::White
+                            } else {
+                                Color::DarkGray
+                            }),
+                        ),
+                    ])];
+
+                    let button_content = Paragraph::new(button_text);
+                    f.render_widget(button_content, inner_area);
+
+                    // Artistic selection indicator
+                    if is_selected {
+                        // Dynamic arrow indicator
+                        let indicator = Paragraph::new("▶").style(Style::default().fg(color));
+                        f.render_widget(
+                            indicator,
+                            Rect {
+                                x: button_area.x - 2,
+                                y: button_area.y,
+                                width: 2,
+                                height: 1,
+                            },
+                        );
+
+                        // Add a subtle highlight line on the right side too for symmetry
+                        let right_indicator = Paragraph::new("◀").style(Style::default().fg(color));
+                        f.render_widget(
+                            right_indicator,
+                            Rect {
+                                x: button_area.x + button_area.width,
+                                y: button_area.y,
+                                width: 2,
+                                height: 1,
+                            },
+                        );
+                    }
+                }
 
                 // Draw help text
                 let help_text = "↑/↓: Navigate | Tab: Navigate | Enter: Select | q: Quit";
@@ -334,7 +367,7 @@ fn run_dashboard(
                                 state.daemon_status = is_daemon_running()?;
                             }
                             1 => {
-                                // Add New Snippet
+                                // Add New Snippet - fully restored
                                 disable_raw_mode()?;
                                 execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
@@ -437,7 +470,6 @@ fn run_dashboard(
 
     Ok(())
 }
-
 // Helper function to show messages in a popup
 fn show_message<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
