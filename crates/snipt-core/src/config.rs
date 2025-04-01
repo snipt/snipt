@@ -6,6 +6,7 @@ use std::path::PathBuf;
 pub const SPECIAL_CHAR: char = ':';
 pub const PID_FILENAME: &str = "snipt-daemon.pid";
 pub const DB_FILENAME: &str = "snipt.json";
+pub const EXECUTE_CHAR: char = '!';
 
 /// Get the snipt configuration directory
 pub fn get_config_dir() -> PathBuf {

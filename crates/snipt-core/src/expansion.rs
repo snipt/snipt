@@ -1,17 +1,62 @@
 use enigo::{Direction, Key, Keyboard};
 
-use crate::config::SPECIAL_CHAR;
+use crate::config::{EXECUTE_CHAR, SPECIAL_CHAR};
 use crate::error::Result;
+use crate::execution::execute_snippet;
 use crate::keyboard::{create_keyboard_controller, send_backspace};
 use crate::models::SnippetEntry;
 use crate::SniptError;
 use std::thread;
 use std::time::Duration;
 
+/// Represents the type of expansion to perform
+pub enum ExpansionType {
+    Text(String),    // Expand as text
+    Execute(String), // Execute as script/URL/command
+}
+
+impl ExpansionType {
+    /// Convert an ExpansionType to its string representation
+    pub fn to_string(&self) -> String {
+        match self {
+            ExpansionType::Text(content) => format!("{}{}", SPECIAL_CHAR, content),
+            ExpansionType::Execute(content) => format!("{}{}", EXECUTE_CHAR, content),
+        }
+    }
+
+    /// Get the content of the expansion type without the prefix character
+    pub fn content(&self) -> &str {
+        match self {
+            ExpansionType::Text(content) => content,
+            ExpansionType::Execute(content) => content,
+        }
+    }
+
+    /// Determine if this is a text expansion
+    pub fn is_text(&self) -> bool {
+        matches!(self, ExpansionType::Text(_))
+    }
+
+    /// Determine if this is an execution expansion
+    pub fn is_execute(&self) -> bool {
+        matches!(self, ExpansionType::Execute(_))
+    }
+}
+
 /// Process text buffer to check for text expansion trigger
-pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Option<String>> {
+pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Option<ExpansionType>> {
     // Check if the buffer starts with the special character
-    if !buffer.starts_with(SPECIAL_CHAR) || buffer.len() <= 1 {
+    if buffer.is_empty() {
+        return Ok(None);
+    }
+
+    let first_char = buffer.chars().next().unwrap();
+
+    if first_char != SPECIAL_CHAR && first_char != EXECUTE_CHAR {
+        return Ok(None);
+    }
+
+    if buffer.len() <= 1 {
         return Ok(None);
     }
 
@@ -21,11 +66,32 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
     // Look for matching snippet
     for entry in snippets {
         if entry.shortcut == shortcut {
-            return Ok(Some(entry.snippet.clone()));
+            if first_char == SPECIAL_CHAR {
+                // Expansion trigger
+                return Ok(Some(ExpansionType::Text(entry.snippet.clone())));
+            } else if first_char == EXECUTE_CHAR {
+                // Execution trigger
+                return Ok(Some(ExpansionType::Execute(entry.snippet.clone())));
+            }
         }
     }
 
     Ok(None)
+}
+
+/// Handle text expansion or script execution
+pub fn handle_expansion(to_delete: usize, expansion_type: ExpansionType) -> Result<()> {
+    match expansion_type {
+        ExpansionType::Text(text) => {
+            // This is the original text expansion behavior
+            replace_text(to_delete + 1, &text)
+        }
+        ExpansionType::Execute(content) => {
+            // Execute the snippet content
+            let _ = execute_snippet(to_delete + 1, &content)?;
+            Ok(())
+        }
+    }
 }
 
 pub fn type_text_with_formatting(keyboard: &mut impl Keyboard, text: &str) -> Result<()> {
@@ -71,7 +137,6 @@ pub fn type_text_with_formatting(keyboard: &mut impl Keyboard, text: &str) -> Re
                 Err(err) => return Err(SniptError::Enigo(format!("Failed to type text: {}", err))),
             }
         }
-
         // Small delay after each line for reliability
         thread::sleep(Duration::from_millis(10));
     }
@@ -91,6 +156,7 @@ pub fn replace_text(to_delete: usize, replacement: &str) -> Result<()> {
 
     // Type the expanded text with formatting preserved
     type_text_with_formatting(&mut keyboard, replacement)?;
+    // execute_snippet(&replacement)?;  // Remove or comment this line
 
     Ok(())
 }

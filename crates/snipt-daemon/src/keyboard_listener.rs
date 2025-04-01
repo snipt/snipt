@@ -1,5 +1,6 @@
 use rdev::{self, EventType, Key as RdevKey};
-use snipt_core::expansion::{process_expansion, replace_text};
+use snipt_core::expansion::process_expansion;
+use snipt_core::handle_expansion;
 use snipt_core::keyboard::rdev_key_to_char;
 use snipt_core::models::SnippetEntry;
 use std::sync::{Arc, Mutex};
@@ -43,7 +44,7 @@ pub fn start_keyboard_listener(
                                     process_expansion(&buffer_text, &snippets_guard)
                                 {
                                     // Delete the special character and shortcut, then type the expanded text
-                                    let _ = replace_text(buffer_text.len() + 1, &expansion);
+                                    let _ = handle_expansion(buffer_text.len(), expansion);
                                 }
                             }
 
