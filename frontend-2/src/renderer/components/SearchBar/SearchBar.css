@@ -1,0 +1,70 @@
+/* src/renderer/components/SearchBar/SearchBar.css */
+.search-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.search-bar {
+    display: flex;
+    align-items: center;
+    background-color: #ffffff;
+    border-radius: 8px;
+    padding: 8px 16px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    flex-grow: 1;
+    max-width: 600px;
+}
+
+.search-icon {
+    color: #757575;
+    margin-right: 8px;
+}
+
+.search-input {
+    border: none;
+    outline: none;
+    font-size: 14px;
+    width: 100%;
+    color: #333333;
+}
+
+.search-icons {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 16px;
+}
+
+.icon-button {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    border: none;
+    color: #505050;
+    cursor: pointer;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s;
+}
+
+.icon-button:hover {
+    background-color: #f5f5f5;
+}
+
+.profile-avatar-mini {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background-color: #f0f0f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #707070;
+    font-size: 12px;
+    font-weight: 500;
+}

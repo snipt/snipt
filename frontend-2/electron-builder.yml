@@ -1,0 +1,32 @@
+# appId: "com.yourcompany.yourappname"
+productName: "Snipt"
+# copyright: "Copyright © 2025 Your Company"
+
+directories:
+  output: "release"
+  buildResources: "build"
+
+files:
+  - "dist/**/*"
+  - "main.js"
+  - "preload.js"
+  - "index.html"
+  - "node_modules/**/*"
+  - "!node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
+  - "!node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
+
+mac:
+  category: "public.app-category.productivity"
+  target:
+    - "dmg"
+    - "zip"
+
+win:
+  target:
+    - "nsis"
+
+linux:
+  target:
+    - "deb"
+    - "AppImage"
+  category: "Utility"
