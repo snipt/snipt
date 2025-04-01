@@ -127,7 +127,9 @@ fn execute_command(keyboard: &mut impl Keyboard, command: &str) -> Result<()> {
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        type_text_with_formatting(keyboard, &stdout)
+        // Trim trailing newlines to prevent execution
+        let trimmed_stdout = stdout.trim_end().to_string();
+        type_text_with_formatting(keyboard, &trimmed_stdout)
     } else {
         Err(SniptError::Other(format!(
             "Command failed: {}",
@@ -136,7 +138,6 @@ fn execute_command(keyboard: &mut impl Keyboard, command: &str) -> Result<()> {
     }
 }
 
-/// Execute content as a script by creating a temporary file and executing it
 fn execute_script(keyboard: &mut impl Keyboard, script_content: &str) -> Result<()> {
     let mut file = NamedTempFile::new()?;
     file.write_all(script_content.as_bytes())?;
@@ -161,7 +162,9 @@ fn execute_script(keyboard: &mut impl Keyboard, script_content: &str) -> Result<
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        type_text_with_formatting(keyboard, &stdout)
+        // Trim trailing newlines to prevent execution
+        let trimmed_stdout = stdout.trim_end().to_string();
+        type_text_with_formatting(keyboard, &trimmed_stdout)
     } else {
         Err(SniptError::Other(format!(
             "Script failed: {}",

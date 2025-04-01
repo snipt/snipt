@@ -88,8 +88,7 @@ pub fn handle_expansion(to_delete: usize, expansion_type: ExpansionType) -> Resu
         }
         ExpansionType::Execute(content) => {
             // Execute the snippet content
-            let _ = execute_snippet(to_delete + 1, &content)?;
-            Ok(())
+            execute_snippet(to_delete + 1, &content)
         }
     }
 }
