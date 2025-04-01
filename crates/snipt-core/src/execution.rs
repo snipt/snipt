@@ -74,7 +74,7 @@ pub fn execute_snippet(to_delete: usize, content: &str) -> Result<()> {
         // Multi-line or command with semicolons can be executed as commands
         execute_command(&mut keyboard, content)
     } else {
-        // If it's not a URL, script, or valid command format, notify the user
+        // If it's not a URL, script, or valid command format, just do normal text expansion
         type_text_with_formatting(&mut keyboard, content)
     }
 }
