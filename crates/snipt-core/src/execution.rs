@@ -3,7 +3,7 @@ use std::env;
 use std::fs::{self, Permissions};
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::process::{Command, Output, Stdio};
+use std::process::Command;
 use tempfile::NamedTempFile;
 
 use crate::expansion::type_text_with_formatting;
