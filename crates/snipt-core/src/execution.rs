@@ -70,8 +70,12 @@ pub fn execute_snippet(to_delete: usize, content: &str) -> Result<()> {
         open_url(content)
     } else if is_script(content) {
         execute_script(&mut keyboard, content)
-    } else {
+    } else if content.contains('\n') || content.contains(';') {
+        // Multi-line or command with semicolons can be executed as commands
         execute_command(&mut keyboard, content)
+    } else {
+        // If it's not a URL, script, or valid command format, notify the user
+        type_text_with_formatting(&mut keyboard, content)
     }
 }
 
