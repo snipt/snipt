@@ -14,6 +14,8 @@ use std::time::Duration;
 
 /// Start the daemon process
 pub fn start_daemon(api_port: u16) -> Result<()> {
+    // Check for permissions first -
+    check_and_request_permissions()?;
     // Check if daemon is already running
     if let Some(pid) = is_daemon_running()? {
         if verify_process_running(pid) {
@@ -38,9 +40,6 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
                 get_db_file_path().to_string_lossy().to_string(),
             ));
         }
-
-        // Check and request permissions if needed
-        check_and_request_permissions()?;
 
         #[cfg(unix)]
         {
