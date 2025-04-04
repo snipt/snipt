@@ -16,6 +16,10 @@ pub fn start_keyboard_listener(
     let text_buffer = Arc::new(Mutex::new(Vec::<(char, Instant)>::new()));
     let buffer_clone = Arc::clone(&text_buffer);
 
+    // Flag to track if we've just performed an expansion
+    let just_expanded = Arc::new(Mutex::new(false));
+    let expanded_flag_clone = Arc::clone(&just_expanded);
+
     // Clone for the thread
     let snippets_clone = Arc::clone(&snippets);
     let running_clone = Arc::clone(&running);
@@ -30,6 +34,7 @@ pub fn start_keyboard_listener(
             match event.event_type {
                 EventType::KeyPress(key) => {
                     let mut buffer = buffer_clone.lock().unwrap();
+                    let mut just_expanded = expanded_flag_clone.lock().unwrap();
 
                     // Handle special keys
                     match key {
@@ -45,13 +50,23 @@ pub fn start_keyboard_listener(
                                 {
                                     // Delete the special character and shortcut, then type the expanded text
                                     let _ = handle_expansion(buffer_text.len(), expansion);
+
+                                    // Set flag that we just expanded
+                                    *just_expanded = true;
+
+                                    // Clear buffer completely for fresh start
+                                    buffer.clear();
+                                    return; // Skip adding the space/newline/tab
                                 }
                             }
 
-                            // Clear buffer regardless of expansion
-                            buffer.clear();
+                            // If we didn't expand or buffer was empty, add the space/newline/tab
+                            // But first check if we need to reset after expansion
+                            if *just_expanded {
+                                buffer.clear();
+                                *just_expanded = false;
+                            }
 
-                            // Add the space/newline/tab character if not expanded
                             let c = match key {
                                 RdevKey::Space => ' ',
                                 RdevKey::Return => '\n',
@@ -64,11 +79,52 @@ pub fn start_keyboard_listener(
                             if !buffer.is_empty() {
                                 buffer.pop();
                             }
+                            // Reset expansion flag if user is editing
+                            *just_expanded = false;
                         }
                         _ => {
+                            // If we just expanded and now typing a new character,
+                            // reset buffer to start fresh
+                            if *just_expanded {
+                                buffer.clear();
+                                *just_expanded = false;
+                            }
+
                             // Add the character to our buffer
                             if let Some(c) = rdev_key_to_char(&key, &event) {
                                 buffer.push((c, Instant::now()));
+
+                                // Check for snippet patterns in the buffer
+                                let snippets_guard = snippets_clone.lock().unwrap();
+
+                                // Look for ":snippet_name" patterns in the current buffer
+                                for i in 0..buffer.len() {
+                                    if buffer[i].0 == ':' && i < buffer.len() - 1 {
+                                        // Extract potential snippet from this position onward
+                                        let potential_snippet: String =
+                                            buffer[i..].iter().map(|(c, _)| *c).collect();
+
+                                        if let Ok(Some(expansion)) =
+                                            process_expansion(&potential_snippet, &snippets_guard)
+                                        {
+                                            // Found a matching snippet to expand!
+
+                                            // Calculate how many characters to delete (the snippet shortcut)
+                                            let chars_to_delete = potential_snippet.len();
+
+                                            // Delete the shortcut, then type the expanded text
+                                            let _ =
+                                                handle_expansion(chars_to_delete - 1, expansion);
+
+                                            // Set flag that we just expanded
+                                            *just_expanded = true;
+
+                                            // Remove the expanded snippet from buffer
+                                            buffer.drain(i..);
+                                            return;
+                                        }
+                                    }
+                                }
 
                                 // Clean up old characters (older than 10 seconds)
                                 let now = Instant::now();
