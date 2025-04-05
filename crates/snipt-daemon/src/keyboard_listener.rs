@@ -1,4 +1,5 @@
 use rdev::{self, EventType, Key as RdevKey};
+use snipt_core::config::{EXECUTE_CHAR, SPECIAL_CHAR};
 use snipt_core::expansion::process_expansion;
 use snipt_core::handle_expansion;
 use snipt_core::keyboard::rdev_key_to_char;
@@ -48,7 +49,7 @@ pub fn start_keyboard_listener(
                                 if let Ok(Some(expansion)) =
                                     process_expansion(&buffer_text, &snippets_guard)
                                 {
-                                    // Delete the special character and shortcut, then type the expanded text
+                                    // Delete the special character and shortcut, then expand or execute
                                     let _ = handle_expansion(buffer_text.len(), expansion);
 
                                     // Set flag that we just expanded
@@ -94,12 +95,23 @@ pub fn start_keyboard_listener(
                             if let Some(c) = rdev_key_to_char(&key, &event) {
                                 buffer.push((c, Instant::now()));
 
-                                // Check for snippet patterns in the buffer
+                                // Get a lock on snippets for the checks
                                 let snippets_guard = snippets_clone.lock().unwrap();
 
-                                // Look for ":snippet_name" patterns in the current buffer
+                                // The most recent character could be a trigger
+                                if (c == SPECIAL_CHAR || c == EXECUTE_CHAR) && buffer.len() == 1 {
+                                    // Just added a potential trigger, continue collecting
+                                    drop(snippets_guard);
+                                    return;
+                                }
+
+                                // Look for both text expansion and execution patterns in the buffer
+                                // This handles triggers in the middle of text
                                 for i in 0..buffer.len() {
-                                    if buffer[i].0 == ':' && i < buffer.len() - 1 {
+                                    let first_char = buffer[i].0;
+                                    if (first_char == SPECIAL_CHAR || first_char == EXECUTE_CHAR)
+                                        && i < buffer.len() - 1
+                                    {
                                         // Extract potential snippet from this position onward
                                         let potential_snippet: String =
                                             buffer[i..].iter().map(|(c, _)| *c).collect();
@@ -107,19 +119,17 @@ pub fn start_keyboard_listener(
                                         if let Ok(Some(expansion)) =
                                             process_expansion(&potential_snippet, &snippets_guard)
                                         {
-                                            // Found a matching snippet to expand!
-
-                                            // Calculate how many characters to delete (the snippet shortcut)
+                                            // Found a matching expansion pattern!
+                                            // Calculate how many characters to delete (the trigger and shortcut)
                                             let chars_to_delete = potential_snippet.len();
 
-                                            // Delete the shortcut, then type the expanded text
-                                            let _ =
-                                                handle_expansion(chars_to_delete - 1, expansion);
+                                            // Handle the expansion or execution
+                                            let _ = handle_expansion(chars_to_delete, expansion);
 
-                                            // Set flag that we just expanded
+                                            // Set flag that we just expanded/executed
                                             *just_expanded = true;
 
-                                            // Remove the expanded snippet from buffer
+                                            // Remove the expanded part from buffer
                                             buffer.drain(i..);
                                             return;
                                         }

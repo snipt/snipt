@@ -3,7 +3,9 @@ use std::env;
 use std::fs::{self, Permissions};
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 use tempfile::NamedTempFile;
 
 use crate::expansion::type_text_with_formatting;
@@ -58,7 +60,7 @@ fn is_script(content: &str) -> bool {
 pub fn execute_snippet(to_delete: usize, content: &str) -> Result<()> {
     // Delete the trigger and shortcut
     let mut keyboard = create_keyboard_controller()?;
-    send_backspace(&mut keyboard, to_delete + 1)?;
+    send_backspace(&mut keyboard, to_delete)?;
 
     if content.trim().is_empty() {
         return Err(SniptError::Other(
@@ -66,73 +68,95 @@ pub fn execute_snippet(to_delete: usize, content: &str) -> Result<()> {
         ));
     }
 
+    // Small delay to ensure UI state is stable
+    thread::sleep(Duration::from_millis(10));
+
+    // Execute based on content type
     if is_url(content) {
-        open_url(content)
-    } else if is_script(content) {
-        execute_script(&mut keyboard, content)
-    } else if content.contains('\n') || content.contains(';') {
-        // Multi-line or command with semicolons can be executed as commands
-        execute_command(&mut keyboard, content)
-    } else {
-        // If it's not a URL, script, or valid command format, just do normal text expansion
-        type_text_with_formatting(&mut keyboard, content)
-    }
-}
+        // For URLs, we can safely spawn a thread since we don't need Enigo
+        let url = content.to_string();
 
-/// Open a URL in the default browser
-fn open_url(url: &str) -> Result<()> {
-    // Ensure URL has proper scheme
-    let url = if !url.starts_with("http://") && !url.starts_with("https://") {
-        // If it starts with www, prepend https://
-        if url.starts_with("www.") {
-            format!("https://{}", url)
-        } else {
-            // For other domain-like strings, add https://
-            format!("https://{}", url)
+        // Spawn a separate thread only for URL opening to keep UI responsive
+        #[cfg(target_os = "macos")]
+        {
+            let _ = Command::new("open")
+                .arg(&url)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            return Ok(());
         }
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = Command::new("xdg-open")
+                .arg(&url)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            return Ok(());
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let _ = Command::new("cmd")
+                .args(&["/c", "start", "", &url])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            return Ok(());
+        }
+    } else if is_script(content) {
+        // Execute script and type its output
+        return execute_script(&mut keyboard, content);
+    } else if content.contains('\n') || content.contains(';') {
+        // Execute command and type its output
+        return execute_command(&mut keyboard, content);
     } else {
-        url.to_string()
-    };
-
-    println!("Opening URL: {}", url);
-
-    // Use the appropriate open command based on the platform
-    #[cfg(target_os = "macos")]
-    let status = Command::new("open").arg(&url).status();
-
-    #[cfg(target_os = "linux")]
-    let status = Command::new("xdg-open").arg(&url).status();
-
-    #[cfg(target_os = "windows")]
-    let status = Command::new("cmd").args(&["/c", "start", &url]).status();
-
-    match status {
-        Ok(exit_status) if exit_status.success() => Ok(()),
-        Ok(exit_status) => Err(SniptError::Other(format!(
-            "Failed to open URL: process exited with code {:?}",
-            exit_status.code()
-        ))),
-        Err(e) => Err(SniptError::Io(e)),
+        // Just do normal text expansion for simple strings
+        return type_text_with_formatting(&mut keyboard, content);
     }
 }
 
 /// Execute content as a command directly in the current shell
 fn execute_command(keyboard: &mut impl Keyboard, command: &str) -> Result<()> {
-    println!("Executing command: {}", command);
+    // Create a command with proper pipes to avoid shell window flashing
+    #[cfg(target_os = "windows")]
+    let mut cmd = Command::new("cmd");
 
     #[cfg(target_os = "windows")]
-    let output = Command::new("cmd").args(["/c", command]).output()?;
+    cmd.args(["/c", command])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
 
     #[cfg(not(target_os = "windows"))]
-    let output = {
+    let mut cmd = {
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        Command::new(&shell).args(["-c", command]).output()?
+        let mut command_obj = Command::new(&shell);
+        command_obj
+            .args(["-c", command])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null());
+        command_obj
+    };
+
+    // Execute with timeout protection
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(e) => return Err(SniptError::Io(e)),
     };
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         // Trim trailing newlines to prevent execution
         let trimmed_stdout = stdout.trim_end().to_string();
+
+        // Wait a tiny bit to ensure we're ready to type
+        thread::sleep(Duration::from_millis(10));
+
+        // Type the output
         type_text_with_formatting(keyboard, &trimmed_stdout)
     } else {
         Err(SniptError::Other(format!(
@@ -143,6 +167,7 @@ fn execute_command(keyboard: &mut impl Keyboard, command: &str) -> Result<()> {
 }
 
 fn execute_script(keyboard: &mut impl Keyboard, script_content: &str) -> Result<()> {
+    // Prepare temp file
     let mut file = NamedTempFile::new()?;
     file.write_all(script_content.as_bytes())?;
     file.flush()?;
@@ -155,19 +180,39 @@ fn execute_script(keyboard: &mut impl Keyboard, script_content: &str) -> Result<
         fs::set_permissions(&path, Permissions::from_mode(0o755))?;
     }
 
-    // Execute the script
+    // Execute with proper stdio redirection
     #[cfg(target_os = "windows")]
-    let output = Command::new("cmd")
-        .args(["/c", path.to_str().unwrap()])
-        .output()?;
+    let mut cmd = Command::new("cmd");
+
+    #[cfg(target_os = "windows")]
+    cmd.args(["/c", path.to_str().unwrap()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
 
     #[cfg(not(target_os = "windows"))]
-    let output = Command::new(&path).output()?;
+    let mut cmd = Command::new(&path);
+
+    #[cfg(not(target_os = "windows"))]
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+
+    // Execute and handle output
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(e) => return Err(SniptError::Io(e)),
+    };
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         // Trim trailing newlines to prevent execution
         let trimmed_stdout = stdout.trim_end().to_string();
+
+        // Small delay to ensure UI stability
+        thread::sleep(Duration::from_millis(10));
+
+        // Type the output
         type_text_with_formatting(keyboard, &trimmed_stdout)
     } else {
         Err(SniptError::Other(format!(

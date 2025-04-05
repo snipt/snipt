@@ -84,11 +84,11 @@ pub fn handle_expansion(to_delete: usize, expansion_type: ExpansionType) -> Resu
     match expansion_type {
         ExpansionType::Text(text) => {
             // This is the original text expansion behavior
-            replace_text(to_delete + 1, &text)
+            replace_text(to_delete, &text)
         }
         ExpansionType::Execute(content) => {
             // Execute the snippet content
-            execute_snippet(to_delete + 1, &content)
+            execute_snippet(to_delete, &content)
         }
     }
 }
@@ -155,7 +155,6 @@ pub fn replace_text(to_delete: usize, replacement: &str) -> Result<()> {
 
     // Type the expanded text with formatting preserved
     type_text_with_formatting(&mut keyboard, replacement)?;
-    // execute_snippet(&replacement)?;  // Remove or comment this line
 
     Ok(())
 }
