@@ -178,12 +178,12 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
                 "You can access the server at: http://localhost:{}",
                 current_port
             );
-            return Ok(());
+            Ok(())
         } else {
-            return Err(SniptError::Other(format!(
+            Err(SniptError::Other(format!(
                 "API server failed to start. Check log at {}",
                 log_file
-            )));
+            )))
         }
     }
 
@@ -291,7 +291,7 @@ pub fn stop_daemon() -> Result<()> {
                 println!("Daemon didn't terminate gracefully, using force kill...");
 
                 if let Ok(status) = std::process::Command::new("kill")
-                    .args(&["-9", &pid.to_string()])
+                    .args(["-9", &pid.to_string()])
                     .status()
                 {
                     if status.success() {
@@ -306,7 +306,7 @@ pub fn stop_daemon() -> Result<()> {
 
         // Try to kill any potential child processes too
         let _ = std::process::Command::new("pkill")
-            .args(&["-P", &pid.to_string()])
+            .args(["-P", &pid.to_string()])
             .status();
 
         if success {

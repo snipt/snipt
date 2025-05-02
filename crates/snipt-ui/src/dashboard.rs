@@ -61,13 +61,13 @@ fn run_dashboard(
     state: &mut DashboardState,
 ) -> Result<()> {
     // List of available actions
-    let actions = vec!["Manage Snippets", "Add New Snippet"];
+    let actions = ["Manage Snippets", "Add New Snippet"];
 
     // Add frame limiter to reduce flickering and CPU usage
     let mut last_render = std::time::Instant::now();
     const RENDER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33); // ~30fps
     let mut force_render = true; // Force initial render
-    
+
     // Initial draw to prevent flickering on first render
     terminal.draw(|_| {})?;
 
@@ -84,22 +84,22 @@ fn run_dashboard(
                     .direction(Direction::Vertical)
                     .constraints([
                         Constraint::Length(vertical_margin), // Top centering space
-                        Constraint::Length(2),  // Title area
-                        Constraint::Length(6),  // ASCII art logo
-                        Constraint::Length(12), // Main content area
-                        Constraint::Length(4),  // Help area
-                        Constraint::Min(0),     // Bottom centering space
+                        Constraint::Length(2),               // Title area
+                        Constraint::Length(6),               // ASCII art logo
+                        Constraint::Length(12),              // Main content area
+                        Constraint::Length(4),               // Help area
+                        Constraint::Min(0),                  // Bottom centering space
                     ])
                     .split(size);
 
                 // Premium color scheme
-                let primary_color = Color::Rgb(120, 90, 180);   // Rich purple
+                let primary_color = Color::Rgb(120, 90, 180); // Rich purple
                 let secondary_color = Color::Rgb(240, 180, 50); // Gold accent
-                let text_color = Color::Rgb(220, 220, 235);     // Soft white
-                let dark_bg = Color::Rgb(25, 20, 40);           // Deep dark purple-blue
-                let detail_color = Color::Rgb(100, 130, 190);   // Steel blue
-                let success_color = Color::Rgb(95, 215, 140);   // Emerald green
-                let error_color = Color::Rgb(235, 85, 85);      // Soft red
+                let text_color = Color::Rgb(220, 220, 235); // Soft white
+                let dark_bg = Color::Rgb(25, 20, 40); // Deep dark purple-blue
+                let detail_color = Color::Rgb(100, 130, 190); // Steel blue
+                let success_color = Color::Rgb(95, 215, 140); // Emerald green
+                let error_color = Color::Rgb(235, 85, 85); // Soft red
 
                 // Title block with version and snippet count - premium styling
                 let title_block = Block::default()
@@ -107,25 +107,28 @@ fn run_dashboard(
                     .title_alignment(Alignment::Center)
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(secondary_color));
-                
+
                 // Get inner area before rendering the block
                 let inner_title = title_block.inner(main_chunks[1]);
                 f.render_widget(title_block, main_chunks[1]);
-                
+
                 let title_info = Line::from(vec![
-                    Span::styled(format!("v{}", env!("CARGO_PKG_VERSION")), 
-                        Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("v{}", env!("CARGO_PKG_VERSION")),
+                        Style::default().fg(Color::DarkGray),
+                    ),
                     Span::styled("  •  ", Style::default().fg(secondary_color)),
-                    Span::styled(format!("{} snippets stored", state.snippet_count), 
-                        Style::default().fg(text_color)),
+                    Span::styled(
+                        format!("{} snippets stored", state.snippet_count),
+                        Style::default().fg(text_color),
+                    ),
                 ]);
-                
-                let title_paragraph = Paragraph::new(title_info)
-                    .alignment(Alignment::Center);
+
+                let title_paragraph = Paragraph::new(title_info).alignment(Alignment::Center);
                 f.render_widget(title_paragraph, inner_title);
 
                 // ASCII art logo with premium colors
-                let logo = vec![
+                let logo = [
                     "  ██████  ███▄    █  ██▓ ██▓███  ▄▄▄█████▓",
                     "▒██    ▒  ██ ▀█   █ ▓██▒▓██░  ██▒▓  ██▒ ▓▒",
                     "░ ▓██▄   ▓██  ▀█ ██▒▒██▒▓██░ ██▓▒▒ ▓██░ ▒░",
@@ -145,11 +148,11 @@ fn run_dashboard(
                 let content_block = Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(primary_color));
-                    
+
                 // Get inner area before rendering the block
                 let inner_content = content_block.inner(main_chunks[3]);
                 f.render_widget(content_block, main_chunks[3]);
-                
+
                 let content_chunks = Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([
@@ -165,40 +168,43 @@ fn run_dashboard(
                     .title_style(Style::default().fg(secondary_color))
                     .borders(Borders::RIGHT)
                     .border_style(Style::default().fg(primary_color));
-                
+
                 let inner_status = status_block.inner(content_chunks[0]);
                 f.render_widget(status_block, content_chunks[0]);
-                
+
                 let status_layout = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(2),  // Status header
-                        Constraint::Length(7),  // Status details
+                        Constraint::Length(2), // Status header
+                        Constraint::Length(7), // Status details
                     ])
                     .split(inner_status);
-                
+
                 // Status header with daemon state - premium styling
                 let status_header = match state.daemon_status {
-                    Some(_) => vec![
-                        Line::from(vec![
-                            Span::styled("● ", Style::default().fg(success_color)),
-                            Span::styled("DAEMON RUNNING", 
-                                Style::default().fg(success_color).add_modifier(Modifier::BOLD)),
-                        ]),
-                    ],
-                    None => vec![
-                        Line::from(vec![
-                            Span::styled("● ", Style::default().fg(error_color)),
-                            Span::styled("DAEMON STOPPED", 
-                                Style::default().fg(error_color).add_modifier(Modifier::BOLD)),
-                        ]),
-                    ],
+                    Some(_) => vec![Line::from(vec![
+                        Span::styled("● ", Style::default().fg(success_color)),
+                        Span::styled(
+                            "DAEMON RUNNING",
+                            Style::default()
+                                .fg(success_color)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ])],
+                    None => vec![Line::from(vec![
+                        Span::styled("● ", Style::default().fg(error_color)),
+                        Span::styled(
+                            "DAEMON STOPPED",
+                            Style::default()
+                                .fg(error_color)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ])],
                 };
-                
-                let header_paragraph = Paragraph::new(status_header)
-                    .alignment(Alignment::Center);
+
+                let header_paragraph = Paragraph::new(status_header).alignment(Alignment::Center);
                 f.render_widget(header_paragraph, status_layout[0]);
-                
+
                 // Enhanced status details with premium styling
                 let status_text = match state.daemon_status {
                     Some(pid) => {
@@ -213,11 +219,17 @@ fn run_dashboard(
                             ]),
                             Line::from(vec![
                                 Span::styled("Trigger method: ", Style::default().fg(detail_color)),
-                                Span::styled("Type shortcut + space/tab/enter", Style::default().fg(text_color)),
+                                Span::styled(
+                                    "Type shortcut + space/tab/enter",
+                                    Style::default().fg(text_color),
+                                ),
                             ]),
                             Line::from(""),
                             Line::from(vec![
-                                Span::styled("Control command: ", Style::default().fg(detail_color)),
+                                Span::styled(
+                                    "Control command: ",
+                                    Style::default().fg(detail_color),
+                                ),
                                 Span::styled("snipt stop", Style::default().fg(secondary_color)),
                             ]),
                         ]
@@ -230,23 +242,31 @@ fn run_dashboard(
                             ]),
                             Line::from(vec![
                                 Span::styled("Status:        ", Style::default().fg(detail_color)),
-                                Span::styled("Snippets won't expand", Style::default().fg(Color::DarkGray)),
+                                Span::styled(
+                                    "Snippets won't expand",
+                                    Style::default().fg(Color::DarkGray),
+                                ),
                             ]),
                             Line::from(vec![
                                 Span::styled("Required:      ", Style::default().fg(detail_color)),
-                                Span::styled("Daemon must be running for expansion", Style::default().fg(Color::DarkGray)),
+                                Span::styled(
+                                    "Daemon must be running for expansion",
+                                    Style::default().fg(Color::DarkGray),
+                                ),
                             ]),
                             Line::from(""),
                             Line::from(vec![
-                                Span::styled("Control command: ", Style::default().fg(detail_color)),
+                                Span::styled(
+                                    "Control command: ",
+                                    Style::default().fg(detail_color),
+                                ),
                                 Span::styled("snipt start", Style::default().fg(secondary_color)),
                             ]),
                         ]
                     }
                 };
 
-                let status_paragraph = Paragraph::new(status_text)
-                    .alignment(Alignment::Left);
+                let status_paragraph = Paragraph::new(status_text).alignment(Alignment::Left);
                 f.render_widget(status_paragraph, status_layout[1]);
 
                 // Actions panel with premium styling
@@ -255,14 +275,24 @@ fn run_dashboard(
                     .title_alignment(Alignment::Center)
                     .title_style(Style::default().fg(secondary_color))
                     .borders(Borders::NONE);
-                
+
                 let inner_action = action_block.inner(content_chunks[1]);
                 f.render_widget(action_block, content_chunks[1]);
-                
+
                 // Action style definitions with premium styling
-                let action_styles = vec![
-                    (secondary_color, "📁", "Manage Snippets", "Browse, edit and manage your snippet collection"),
-                    (secondary_color, "✨", "Add New Snippet", "Create a new text expansion snippet"),
+                let action_styles = [
+                    (
+                        secondary_color,
+                        "📁",
+                        "Manage Snippets",
+                        "Browse, edit and manage your snippet collection",
+                    ),
+                    (
+                        secondary_color,
+                        "✨",
+                        "Add New Snippet",
+                        "Create a new text expansion snippet",
+                    ),
                 ];
 
                 // Action buttons layout
@@ -280,44 +310,56 @@ fn run_dashboard(
                 for (i, _) in actions.iter().enumerate() {
                     let is_selected = i == state.selected_action;
                     let (color, icon, title, description) = action_styles[i];
-                    
+
                     // Select the button area
                     let button_area = match i {
                         0 => button_chunks[0],
-                        _ => button_chunks[2]
+                        _ => button_chunks[2],
                     };
-                    
+
                     // Create border around the selected button - premium styling
                     let button_block = Block::default()
-                        .borders(if is_selected { Borders::ALL } else { Borders::NONE })
+                        .borders(if is_selected {
+                            Borders::ALL
+                        } else {
+                            Borders::NONE
+                        })
                         .border_style(Style::default().fg(color))
-                        .style(Style::default().bg(if is_selected { dark_bg } else { Color::Reset }));
-                        
+                        .style(Style::default().bg(if is_selected {
+                            dark_bg
+                        } else {
+                            Color::Reset
+                        }));
+
                     // Get inner area before rendering the block
                     let inner_button = button_block.inner(button_area);
                     f.render_widget(button_block, button_area);
-                    
+
                     // Indicator and styling with premium feel
                     let select_indicator = if is_selected { "›" } else { " " };
-                    
+
                     // Main action title - premium styling
-                    let action_title = Line::from(vec![
-                        Span::styled(
-                            format!(" {} {} {}", select_indicator, icon, title),
-                            Style::default()
-                                .fg(if is_selected { secondary_color } else { detail_color })
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ]);
-                    
+                    let action_title = Line::from(vec![Span::styled(
+                        format!(" {} {} {}", select_indicator, icon, title),
+                        Style::default()
+                            .fg(if is_selected {
+                                secondary_color
+                            } else {
+                                detail_color
+                            })
+                            .add_modifier(Modifier::BOLD),
+                    )]);
+
                     // Action description with premium styling
-                    let action_desc = Line::from(vec![
-                        Span::styled(
-                            format!("    {}", description),
-                            Style::default().fg(if is_selected { text_color } else { Color::DarkGray }),
-                        ),
-                    ]);
-                    
+                    let action_desc = Line::from(vec![Span::styled(
+                        format!("    {}", description),
+                        Style::default().fg(if is_selected {
+                            text_color
+                        } else {
+                            Color::DarkGray
+                        }),
+                    )]);
+
                     let button_content = vec![action_title, action_desc];
                     let button_paragraph = Paragraph::new(button_content);
                     f.render_widget(button_paragraph, inner_button);
@@ -330,14 +372,19 @@ fn run_dashboard(
                     .title_style(Style::default().fg(secondary_color))
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(primary_color));
-                
+
                 // Get inner area before rendering the block
                 let inner_help = help_block.inner(main_chunks[4]);
                 f.render_widget(help_block, main_chunks[4]);
-                
+
                 let help_text = vec![
                     Line::from(vec![
-                        Span::styled("Navigation: ", Style::default().fg(detail_color).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            "Navigation: ",
+                            Style::default()
+                                .fg(detail_color)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Span::styled("[↑/↓]", Style::default().fg(secondary_color)),
                         Span::raw(" select  "),
                         Span::styled("[Enter]", Style::default().fg(secondary_color)),
@@ -346,7 +393,12 @@ fn run_dashboard(
                         Span::raw(" exit"),
                     ]),
                     Line::from(vec![
-                        Span::styled("Usage: ", Style::default().fg(detail_color).add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            "Usage: ",
+                            Style::default()
+                                .fg(detail_color)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Span::raw("Snippets activate when you type their shortcut followed by "),
                         Span::styled("space", Style::default().fg(secondary_color)),
                         Span::raw(", "),
@@ -355,9 +407,8 @@ fn run_dashboard(
                         Span::styled("enter", Style::default().fg(secondary_color)),
                     ]),
                 ];
-                
-                let help_paragraph = Paragraph::new(help_text)
-                    .alignment(Alignment::Center);
+
+                let help_paragraph = Paragraph::new(help_text).alignment(Alignment::Center);
                 f.render_widget(help_paragraph, inner_help);
             })?;
 
@@ -429,12 +480,12 @@ fn run_dashboard(
                                             Color::Green,
                                             2000,
                                         )?;
-                                        
+
                                         // Update state information
                                         state.daemon_status = is_daemon_running()?;
                                         let snippets = load_snippets().unwrap_or_default();
                                         state.snippet_count = snippets.len();
-                                        
+
                                         // Exit this process
                                         return Ok(());
                                     }

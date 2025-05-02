@@ -1,6 +1,6 @@
 //! Utilities for managing the API server.
 
-use snipt_core::{get_config_dir, SniptError, Result};
+use snipt_core::{get_config_dir, Result, SniptError};
 use std::fs;
 use std::io::{Read, Write};
 
@@ -49,8 +49,5 @@ pub async fn test_port_availability(port: u16) -> bool {
     use std::net::TcpListener;
 
     // Try to bind to the port to see if it's available
-    match TcpListener::bind(format!("127.0.0.1:{}", port)) {
-        Ok(_) => true,   // Port is available
-        Err(_) => false, // Port is in use or cannot be bound to
-    }
+    TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok()
 }

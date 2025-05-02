@@ -249,7 +249,7 @@ fn run_ui(
                     .split(size);
 
                 // Render tab bar
-                let titles = vec!["Snippets", "Help"]
+                let titles = ["Snippets", "Help"]
                     .iter()
                     .map(|t| Span::styled(*t, Style::default().fg(Color::White)))
                     .collect();
@@ -482,9 +482,7 @@ fn run_ui(
                             ..
                         } if modifiers.contains(KeyModifiers::CONTROL) => {
                             // Save with Ctrl+w
-                            if let Err(e) = state.save_edited_snippet() {
-                                return Err(e);
-                            }
+                            state.save_edited_snippet()?;
                             should_refresh = true;
                         }
                         KeyEvent {
@@ -599,9 +597,7 @@ fn run_ui(
                             if let Some(ConfirmAction::Delete) = state.confirm_action {
                                 if let Some(actual_index) = state.get_selected_entry_index() {
                                     let shortcut = state.entries[actual_index].shortcut.clone();
-                                    if let Err(e) = delete_snippet(&shortcut) {
-                                        return Err(e);
-                                    }
+                                    delete_snippet(&shortcut)?;
 
                                     // Reload entries and update state safely
                                     match load_snippets() {
@@ -704,9 +700,7 @@ fn handle_list_input(
             // For backward compatibility
             if let Some(actual_index) = state.get_selected_entry_index() {
                 let shortcut = state.entries[actual_index].shortcut.clone();
-                if let Err(e) = delete_snippet(&shortcut) {
-                    return Err(e);
-                }
+                delete_snippet(&shortcut)?;
 
                 // Reload entries safely
                 match load_snippets() {
@@ -894,8 +888,8 @@ fn draw_multiline_editor<B: ratatui::backend::Backend>(
     size: Rect,
 ) {
     // Calculate editor dimensions
-    let width = size.width.min(80).max(40);
-    let height = size.height.min(20).max(10);
+    let width = size.width.clamp(40, 80);
+    let height = size.height.clamp(10, 20);
     let x = (size.width - width) / 2;
     let y = (size.height - height) / 2;
 

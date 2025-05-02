@@ -57,7 +57,11 @@ fn is_script(content: &str) -> bool {
 }
 
 /// Execute a snippet based on its content type
-pub fn execute_snippet(to_delete: usize, content: &str) -> Result<()> {
+pub fn execute_snippet(
+    to_delete: usize,
+    content: &str,
+    params: Option<&Vec<String>>,
+) -> Result<()> {
     // Delete the trigger and shortcut
     let mut keyboard = create_keyboard_controller()?;
     send_backspace(&mut keyboard, to_delete)?;
@@ -84,7 +88,7 @@ pub fn execute_snippet(to_delete: usize, content: &str) -> Result<()> {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn();
-            return Ok(());
+            Ok(())
         }
 
         #[cfg(target_os = "linux")]
@@ -108,24 +112,55 @@ pub fn execute_snippet(to_delete: usize, content: &str) -> Result<()> {
         }
     } else if is_script(content) {
         // Execute script and type its output
-        return execute_script(&mut keyboard, content);
+        return execute_script(&mut keyboard, content, params);
     } else if content.contains('\n') || content.contains(';') {
         // Execute command and type its output
-        return execute_command(&mut keyboard, content);
+        return execute_command(&mut keyboard, content, params);
     } else {
-        // Just do normal text expansion for simple strings
-        return type_text_with_formatting(&mut keyboard, content);
+        // For simple strings, check if we have parameters
+        if let Some(params) = params {
+            // Try to format the content with parameters
+            let mut formatted_content = content.to_string();
+
+            // Simple parameter substitution - replace $1, $2, etc. with parameter values
+            for (i, param) in params.iter().enumerate() {
+                let param_marker = format!("${}", i + 1);
+                formatted_content = formatted_content.replace(&param_marker, param);
+            }
+
+            // Also handle expressions like ${1+2} by executing them
+            if formatted_content.contains("${") && formatted_content.contains("}") {
+                let modified_content = format!("#!/bin/bash\necho \"{}\"", formatted_content);
+                return execute_script(&mut keyboard, &modified_content, None);
+            }
+
+            return type_text_with_formatting(&mut keyboard, &formatted_content);
+        } else {
+            // Just do normal text expansion for simple strings
+            return type_text_with_formatting(&mut keyboard, content);
+        }
     }
 }
 
 /// Execute content as a command directly in the current shell
-fn execute_command(keyboard: &mut impl Keyboard, command: &str) -> Result<()> {
+fn execute_command(
+    keyboard: &mut impl Keyboard,
+    command: &str,
+    params: Option<&Vec<String>>,
+) -> Result<()> {
+    // Apply parameter substitution if params are provided
+    let command = if let Some(params) = params {
+        apply_parameter_substitution(command, params)
+    } else {
+        command.to_string()
+    };
+
     // Create a command with proper pipes to avoid shell window flashing
     #[cfg(target_os = "windows")]
     let mut cmd = Command::new("cmd");
 
     #[cfg(target_os = "windows")]
-    cmd.args(["/c", command])
+    cmd.args(["/c", &command])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());
@@ -135,7 +170,7 @@ fn execute_command(keyboard: &mut impl Keyboard, command: &str) -> Result<()> {
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut command_obj = Command::new(&shell);
         command_obj
-            .args(["-c", command])
+            .args(["-c", &command])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
@@ -166,7 +201,18 @@ fn execute_command(keyboard: &mut impl Keyboard, command: &str) -> Result<()> {
     }
 }
 
-fn execute_script(keyboard: &mut impl Keyboard, script_content: &str) -> Result<()> {
+fn execute_script(
+    keyboard: &mut impl Keyboard,
+    script_content: &str,
+    params: Option<&Vec<String>>,
+) -> Result<()> {
+    // Apply parameter substitution if params are provided
+    let script_content = if let Some(params) = params {
+        apply_parameter_substitution(script_content, params)
+    } else {
+        script_content.to_string()
+    };
+
     // Prepare temp file
     let mut file = NamedTempFile::new()?;
     file.write_all(script_content.as_bytes())?;
@@ -220,4 +266,20 @@ fn execute_script(keyboard: &mut impl Keyboard, script_content: &str) -> Result<
             String::from_utf8_lossy(&output.stderr)
         )))
     }
+}
+
+/// Apply parameter substitution to the script/command content
+fn apply_parameter_substitution(content: &str, params: &[String]) -> String {
+    let mut result = content.to_string();
+
+    // Replace $1, $2, etc. with parameter values
+    for (i, param) in params.iter().enumerate() {
+        let param_marker = format!("${}", i + 1);
+        result = result.replace(&param_marker, param);
+    }
+
+    // Also replace $* with all parameters joined by space
+    result = result.replace("$*", &params.join(" "));
+
+    result
 }

@@ -7,7 +7,7 @@ use crate::api::{
 };
 use crate::server::utils::{port_is_available, save_api_port};
 
-use snipt_core::{get_config_dir, is_daemon_running, SniptError, Result};
+use snipt_core::{get_config_dir, is_daemon_running, Result, SniptError};
 use std::fs;
 use std::net::SocketAddr;
 use warp::Filter;

@@ -126,7 +126,7 @@ fn request_macos_permissions() -> Result<()> {
     if open_result.is_err() {
         // Fallback for older macOS versions
         let _ = Command::new("open")
-            .args(&["/System/Library/PreferencePanes/Security.prefPane"])
+            .args(["/System/Library/PreferencePanes/Security.prefPane"])
             .status();
     }
 
@@ -207,10 +207,7 @@ fn detect_terminal_info() -> TerminalInfo {
 
         // If not found in common locations, try to find it
         if terminal_path.is_empty() {
-            if let Ok(output) = Command::new("mdfind")
-                .args(&["-name", "iTerm.app"])
-                .output()
-            {
+            if let Ok(output) = Command::new("mdfind").args(["-name", "iTerm.app"]).output() {
                 let result = String::from_utf8_lossy(&output.stdout);
                 if let Some(first_line) = result.lines().next() {
                     if !first_line.is_empty() {
@@ -222,7 +219,7 @@ fn detect_terminal_info() -> TerminalInfo {
             // Try iTerm2.app if iTerm.app not found
             if terminal_path.is_empty() {
                 if let Ok(output) = Command::new("mdfind")
-                    .args(&["-name", "iTerm2.app"])
+                    .args(["-name", "iTerm2.app"])
                     .output()
                 {
                     let result = String::from_utf8_lossy(&output.stdout);
@@ -253,7 +250,7 @@ fn detect_terminal_info() -> TerminalInfo {
         };
 
         if let Ok(output) = Command::new("mdfind")
-            .args(&["-name", &search_name])
+            .args(["-name", &search_name])
             .output()
         {
             let result = String::from_utf8_lossy(&output.stdout);
@@ -286,7 +283,7 @@ fn get_terminal_app_name() -> String {
 
     // Get the parent process ID
     let ppid = match std::process::Command::new("ps")
-        .args(&["-o", "ppid=", "-p", &format!("{}", std::process::id())])
+        .args(["-o", "ppid=", "-p", &format!("{}", std::process::id())])
         .output()
     {
         Ok(output) => {
@@ -305,7 +302,7 @@ fn get_terminal_app_name() -> String {
 
     // Try to get process information directly
     if let Ok(output) = std::process::Command::new("ps")
-        .args(&["-p", &std::process::id().to_string(), "-o", "comm="])
+        .args(["-p", &std::process::id().to_string(), "-o", "comm="])
         .output()
     {
         let proc_name = String::from_utf8_lossy(&output.stdout).trim().to_string();

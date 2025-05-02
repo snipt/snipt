@@ -1,4 +1,5 @@
 use enigo::{Direction, Key, Keyboard};
+use std::fmt;
 
 use crate::config::{EXECUTE_CHAR, SPECIAL_CHAR};
 use crate::error::Result;
@@ -11,24 +12,40 @@ use std::time::Duration;
 
 /// Represents the type of expansion to perform
 pub enum ExpansionType {
-    Text(String),    // Expand as text
-    Execute(String), // Execute as script/URL/command
+    Text(String),                           // Expand as text
+    Execute(String),                        // Execute as script/URL/command
+    ExecuteWithParams(String, Vec<String>), // Execute with parameters
+}
+
+impl fmt::Display for ExpansionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let formatted = match self {
+            ExpansionType::Text(content) => format!("{}{}", SPECIAL_CHAR, content),
+            ExpansionType::Execute(content) => format!("{}{}", EXECUTE_CHAR, content),
+            ExpansionType::ExecuteWithParams(content, params) => {
+                let params_str = params.join(",");
+                format!("{}{}({})", EXECUTE_CHAR, content, params_str)
+            }
+        };
+        write!(f, "{}", formatted)
+    }
 }
 
 impl ExpansionType {
-    /// Convert an ExpansionType to its string representation
-    pub fn to_string(&self) -> String {
-        match self {
-            ExpansionType::Text(content) => format!("{}{}", SPECIAL_CHAR, content),
-            ExpansionType::Execute(content) => format!("{}{}", EXECUTE_CHAR, content),
-        }
-    }
-
     /// Get the content of the expansion type without the prefix character
     pub fn content(&self) -> &str {
         match self {
             ExpansionType::Text(content) => content,
             ExpansionType::Execute(content) => content,
+            ExpansionType::ExecuteWithParams(content, _) => content,
+        }
+    }
+
+    /// Get the parameters for execution, if any
+    pub fn params(&self) -> Option<&Vec<String>> {
+        match self {
+            ExpansionType::ExecuteWithParams(_, params) => Some(params),
+            _ => None,
         }
     }
 
@@ -39,7 +56,10 @@ impl ExpansionType {
 
     /// Determine if this is an execution expansion
     pub fn is_execute(&self) -> bool {
-        matches!(self, ExpansionType::Execute(_))
+        matches!(
+            self,
+            ExpansionType::Execute(_) | ExpansionType::ExecuteWithParams(_, _)
+        )
     }
 }
 
@@ -63,7 +83,7 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
     // Extract the shortcut without the special character
     let shortcut = &buffer[1..];
 
-    // Look for matching snippet
+    // Look for exact matches first (original behavior)
     for entry in snippets {
         if entry.shortcut == shortcut {
             if first_char == SPECIAL_CHAR {
@@ -76,7 +96,118 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
         }
     }
 
+    // Look for shortcuts with parameter placeholders like "sum(a,b)"
+    if first_char == EXECUTE_CHAR {
+        // Check for both parameterized shortcut definitions and actual values
+        for entry in snippets {
+            if let Some(base_shortcut) = extract_base_shortcut(&entry.shortcut) {
+                // This is a shortcut with parameter syntax like "sum(a,b)"
+
+                // Check if the current input starts with this base shortcut
+                if shortcut.starts_with(base_shortcut)
+                    && shortcut.contains('(')
+                    && shortcut.ends_with(')')
+                {
+                    // Extract parameters from the user input
+                    if let Some(params) = extract_params_from_input(shortcut) {
+                        // Extract placeholders from the shortcut definition
+                        let placeholders = extract_placeholders(&entry.shortcut);
+
+                        // Create a mapping from placeholders to actual values
+                        let param_map = create_param_mapping(&placeholders, &params);
+
+                        // Apply parameter substitution to the snippet content
+                        let modified_content = apply_param_mapping(&entry.snippet, &param_map);
+
+                        return Ok(Some(ExpansionType::Execute(modified_content)));
+                    }
+                }
+            }
+        }
+    }
+
+    // No matching shortcut found
     Ok(None)
+}
+
+/// Extract the base shortcut from a parameterized shortcut like "sum(a,b)" -> "sum"
+fn extract_base_shortcut(shortcut: &str) -> Option<&str> {
+    if shortcut.contains('(') {
+        let parts: Vec<&str> = shortcut.split('(').collect();
+        if parts.len() >= 2 {
+            return Some(parts[0]);
+        }
+    }
+    None
+}
+
+/// Extract parameters from input like "sum(2,3)" -> ["2", "3"]
+fn extract_params_from_input(input: &str) -> Option<Vec<String>> {
+    if let Some(open_idx) = input.find('(') {
+        if let Some(close_idx) = input.rfind(')') {
+            if close_idx > open_idx {
+                let params_str = &input[open_idx + 1..close_idx];
+                let params: Vec<String> = params_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                return Some(params);
+            }
+        }
+    }
+    None
+}
+
+/// Extract placeholders from shortcut like "sum(a,b)" -> ["a", "b"]
+fn extract_placeholders(shortcut: &str) -> Vec<String> {
+    if let Some(open_idx) = shortcut.find('(') {
+        if let Some(close_idx) = shortcut.rfind(')') {
+            if close_idx > open_idx {
+                let params_str = &shortcut[open_idx + 1..close_idx];
+                return params_str
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Create a mapping from placeholders to actual values
+fn create_param_mapping(
+    placeholders: &[String],
+    values: &[String],
+) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+
+    for (i, placeholder) in placeholders.iter().enumerate() {
+        if i < values.len() {
+            map.insert(placeholder.clone(), values[i].clone());
+        }
+    }
+
+    map
+}
+
+/// Apply parameter mapping to snippet content
+fn apply_param_mapping(
+    content: &str,
+    param_map: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut result = content.to_string();
+
+    for (placeholder, value) in param_map {
+        // Replace ${placeholder} with value
+        let placeholder_pattern = format!("${{{}}}", placeholder);
+        result = result.replace(&placeholder_pattern, value);
+
+        // Also replace $placeholder with value
+        let simple_pattern = format!("${}", placeholder);
+        result = result.replace(&simple_pattern, value);
+    }
+
+    result
 }
 
 /// Handle text expansion or script execution
@@ -87,8 +218,12 @@ pub fn handle_expansion(to_delete: usize, expansion_type: ExpansionType) -> Resu
             replace_text(to_delete, &text)
         }
         ExpansionType::Execute(content) => {
-            // Execute the snippet content
-            execute_snippet(to_delete, &content)
+            // Execute the snippet content without parameters
+            execute_snippet(to_delete, &content, None)
+        }
+        ExpansionType::ExecuteWithParams(content, params) => {
+            // Execute the snippet content with parameters
+            execute_snippet(to_delete, &content, Some(&params))
         }
     }
 }

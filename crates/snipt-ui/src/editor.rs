@@ -115,7 +115,7 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                 // Try minimal UI if main UI fails
                 error_message = Some(format!("UI Error: {}. Using minimal mode.", e));
 
-                if let Err(_) = execute!(
+                if execute!(
                     stdout,
                     terminal::Clear(ClearType::All),
                     cursor::MoveTo(0, 0),
@@ -132,7 +132,9 @@ fn run_interactive_ui(stdout: &mut io::Stdout) -> Result<bool> {
                     )),
                     Print("Press Ctrl+W to save or Esc to cancel\n"),
                     ResetColor
-                ) {
+                )
+                .is_err()
+                {
                     // If even the minimal UI fails, return a usable error
                     return Err(SniptError::Other(
                         "Terminal display error. Try in a larger terminal.".to_string(),
@@ -362,12 +364,10 @@ fn process_paste_buffer(
             } else {
                 snippet.push(combined_line);
             }
+        } else if insertion_index < snippet.len() {
+            snippet.insert(insertion_index, line.to_string());
         } else {
-            if insertion_index < snippet.len() {
-                snippet.insert(insertion_index, line.to_string());
-            } else {
-                snippet.push(line.to_string());
-            }
+            snippet.push(line.to_string());
         }
     }
 
@@ -459,6 +459,7 @@ fn handle_shortcut_input(
     Ok(state_changed)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_normal_mode(
     snippet: &mut Vec<String>,
     cursor_pos: &mut usize,
@@ -580,6 +581,7 @@ fn handle_normal_mode(
 }
 
 // Handle insert mode input
+#[allow(clippy::too_many_arguments)]
 fn handle_insert_mode(
     snippet: &mut Vec<String>,
     cursor_pos: &mut usize,
@@ -767,17 +769,18 @@ fn submit_snippet(stdout: &mut io::Stdout, shortcut: &str, snippet: &[String]) -
         Ok(_) => {
             show_success_message(stdout)?;
             // Important: Return true to indicate success
-            return Ok(true);
+            Ok(true)
         }
         Err(SniptError::Other(msg)) if msg.contains("already exists") => {
             show_error_message(stdout, &msg)?;
             thread_sleep(1500);
-            return Ok(false);
+            Ok(false)
         }
-        Err(e) => return Err(e),
+        Err(e) => Err(e),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_ui(
     stdout: &mut io::Stdout,
     shortcut: &str,
@@ -1211,6 +1214,7 @@ fn draw_field(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_multiline_field(
     stdout: &mut io::Stdout,
     x: u16,
@@ -1445,7 +1449,7 @@ fn show_success_message(stdout: &mut io::Stdout) -> Result<()> {
     let (width, height) = terminal::size().unwrap_or((80, 24));
 
     // Create an attractive success message box
-    let message_lines = vec![
+    let message_lines = [
         "✓ Snippet added successfully!",
         "",
         "Your snippet is now ready to use.",

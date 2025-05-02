@@ -4,9 +4,7 @@ pub fn verify_process_running(pid: u32) -> bool {
     use std::process::Command;
 
     // On Unix, we can use kill -0 to check if process exists
-    let output = Command::new("kill")
-        .args(&["-0", &pid.to_string()])
-        .output();
+    let output = Command::new("kill").args(["-0", &pid.to_string()]).output();
 
     if let Ok(output) = output {
         output.status.success()
@@ -197,7 +195,7 @@ pub fn detect_terminal_app() -> String {
 
     // Get the parent process ID to determine the terminal
     let ppid = match Command::new("ps")
-        .args(&["-o", "ppid=", "-p", &format!("{}", std::process::id())])
+        .args(["-o", "ppid=", "-p", &format!("{}", std::process::id())])
         .output()
     {
         Ok(output) => {
@@ -228,7 +226,7 @@ pub fn find_terminal_in_process_tree(pid: u32) -> String {
 
     // Get process command name
     let output = Command::new("ps")
-        .args(&["-p", &pid.to_string(), "-o", "comm="])
+        .args(["-p", &pid.to_string(), "-o", "comm="])
         .output();
 
     if let Ok(output) = output {
@@ -255,7 +253,7 @@ pub fn find_terminal_in_process_tree(pid: u32) -> String {
         {
             // Get parent PID
             let ppid_output = Command::new("ps")
-                .args(&["-p", &pid.to_string(), "-o", "ppid="])
+                .args(["-p", &pid.to_string(), "-o", "ppid="])
                 .output();
 
             if let Ok(ppid_output) = ppid_output {
@@ -277,7 +275,7 @@ pub fn find_terminal_in_process_tree(pid: u32) -> String {
     }
 
     // If we still can't determine, check if there are any obvious terminal apps running
-    let terminal_check = Command::new("ps").args(&["-e", "-o", "comm="]).output();
+    let terminal_check = Command::new("ps").args(["-e", "-o", "comm="]).output();
 
     if let Ok(output) = terminal_check {
         let all_processes = String::from_utf8_lossy(&output.stdout);
