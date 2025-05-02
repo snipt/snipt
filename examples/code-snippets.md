@@ -9,6 +9,7 @@ The colon (`:`) trigger is ideal for inserting static code snippets directly wit
 ### Rust Colon Expansions
 
 **Shortcut**: `fn`
+
 **Content**:
 ```rust
 fn main() {
@@ -24,6 +25,7 @@ fn main() {
 ```
 
 **Shortcut**: `test`
+
 **Content**:
 ```rust
 #[cfg(test)]
@@ -55,6 +57,7 @@ mod tests {
 ### JavaScript/TypeScript Colon Expansions
 
 **Shortcut**: `react-component`
+
 **Content**:
 ```jsx
 import React from 'react';
@@ -96,6 +99,7 @@ export default Component;
 ### Rust Common Imports
 
 **Shortcut**: `rustimports`
+
 **Content**:
 ```rust
 use std::fs;
@@ -121,6 +125,7 @@ use std::thread;
 ### Rust CLI Boilerplate 
 
 **Shortcut**: `rusttokio`
+
 **Content**:
 ```rust
 #[tokio::main]
