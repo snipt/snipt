@@ -1,4 +1,4 @@
-use enigo::Keyboard;
+use enigo::{Direction, Key, Keyboard};
 use std::env;
 use std::fs::{self, Permissions};
 use std::io::Write;
@@ -254,6 +254,56 @@ fn execute_script(
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         // Trim trailing newlines to prevent execution
         let trimmed_stdout = stdout.trim_end().to_string();
+
+        // Detect multi-line output
+        if trimmed_stdout.contains('\n') {
+            // For multi-line output on macOS/Linux, we need to handle it differently
+            // to prevent each line from being executed as a command
+            #[cfg(not(target_os = "windows"))]
+            {
+                // First, write the content to a file in a location that will definitely exist
+                let home_dir = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let output_path = format!("{}/snipt_output.txt", home_dir);
+
+                // Write the output to a fixed location
+                fs::write(&output_path, &trimmed_stdout)?;
+
+                // Make sure the file is readable
+                #[cfg(unix)]
+                fs::set_permissions(&output_path, Permissions::from_mode(0o644))?;
+
+                // Prepare a cat command that will display the file contents
+                let cat_cmd = format!("cat \"{}\"", output_path);
+
+                // Small delay to ensure UI stability
+                thread::sleep(Duration::from_millis(10));
+
+                // Type the cat command
+                match keyboard.text(&cat_cmd) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        return Err(SniptError::Enigo(format!("Failed to type text: {}", err)))
+                    }
+                }
+
+                // Press Enter to execute the cat command
+                match keyboard.key(Key::Return, Direction::Click) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        return Err(SniptError::Enigo(format!("Failed to type key: {}", err)))
+                    }
+                }
+
+                // Schedule deletion for a few seconds later to ensure the cat command has time to run
+                let path_to_delete = output_path.clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(2));
+                    let _ = fs::remove_file(path_to_delete); // Ignore errors
+                });
+
+                return Ok(());
+            }
+        }
 
         // Small delay to ensure UI stability
         thread::sleep(Duration::from_millis(10));

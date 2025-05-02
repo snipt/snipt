@@ -114,30 +114,39 @@ find ${directory} -type f -name "${pattern}" 2>/dev/null | sort
 **Content**:
 ```bash
 #!/bin/bash
+# This script outputs system information
 case "${type}" in
   "cpu")
-    echo "CPU Information:"
-    lscpu | grep -E 'Model name|CPU\(s\)|MHz'
+    printf "CPU Information:\n"
+    printf "Model: %s\n" "$(sysctl -n machdep.cpu.brand_string)"
+    printf "CPU Cores: %s\n" "$(sysctl -n hw.physicalcpu)"
+    printf "CPU Threads: %s\n" "$(sysctl -n hw.logicalcpu)"
     ;;
   "memory")
-    echo "Memory Information:"
-    free -h
+    printf "Memory Information:\n"
+    printf "Total Memory: %s GB\n" "$(sysctl -n hw.memsize | awk '{printf "%.2f", $0/1073741824}')"
+    vm_stat | perl -ne '/page size of (\d+)/ and $size=$1; /Pages free: (\d+)/ and printf("Free Memory: %.2f GB\n", $1 * $size / 1073741824); /Pages active: (\d+)/ and printf("Active Memory: %.2f GB\n", $1 * $size / 1073741824);'
     ;;
   "disk")
-    echo "Disk Usage:"
-    df -h
+    printf "Disk Usage:\n"
+    df -h | awk '{OFS="\t"; if (NR==1) {print $1, $2, $3, $4, $5, $6} else {sub(/%/, "", $5); print $1, $2, $3, $4, $5, $6}}'
     ;;
   "all")
-    echo "=== CPU Information ==="
-    lscpu | grep -E 'Model name|CPU\(s\)|MHz'
-    echo -e "\n=== Memory Information ==="
-    free -h
-    echo -e "\n=== Disk Usage ==="
-    df -h
+    printf "=== CPU Information ===\n"
+    printf "Model: %s\n" "$(sysctl -n machdep.cpu.brand_string)"
+    printf "CPU Cores: %s\n" "$(sysctl -n hw.physicalcpu)"
+    printf "CPU Threads: %s\n" "$(sysctl -n hw.logicalcpu)"
+    
+    printf "\n=== Memory Information ===\n"
+    printf "Total Memory: %s GB\n" "$(sysctl -n hw.memsize | awk '{printf "%.2f", $0/1073741824}')"
+    vm_stat | perl -ne '/page size of (\d+)/ and $size=$1; /Pages free: (\d+)/ and printf("Free Memory: %.2f GB\n", $1 * $size / 1073741824); /Pages active: (\d+)/ and printf("Active Memory: %.2f GB\n", $1 * $size / 1073741824);'
+    
+    printf "\n=== Disk Usage ===\n"
+    df -h | awk '{OFS="\t"; if (NR==1) {print $1, $2, $3, $4, $5, $6} else {sub(/%/, "", $5); print $1, $2, $3, $4, $5, $6}}'
     ;;
   *)
-    echo "Unknown system information type: ${type}"
-    echo "Available options: cpu, memory, disk, all"
+    printf "Unknown system information type: %s\n" "${type}"
+    printf "Available options: cpu, memory, disk, all\n"
     ;;
 esac
 ```
@@ -145,9 +154,9 @@ esac
 **Usage**: `!sysinfo(memory)` →
 ```
 Memory Information:
-              total        used        free      shared  buff/cache   available
-Mem:           15Gi       4.2Gi       6.2Gi       297Mi       4.6Gi        10Gi
-Swap:          8.0Gi          0B       8.0Gi
+Total Memory: 16.00 GB
+Free Memory: 2.34 GB
+Active Memory: 5.67 GB
 ```
 
 ## Network and API Examples
