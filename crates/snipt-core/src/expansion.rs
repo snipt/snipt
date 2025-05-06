@@ -1,5 +1,6 @@
 use enigo::{Direction, Key, Keyboard};
 use std::fmt;
+use std::process::Command;
 
 use crate::config::{EXECUTE_CHAR, SPECIAL_CHAR};
 use crate::error::Result;
@@ -10,19 +11,28 @@ use crate::SniptError;
 use std::thread;
 use std::time::Duration;
 
+/// Represents the expansion style to apply based on the current application context
+pub enum ExpansionStyle {
+    /// Default expansion style - expand the snippet content directly
+    Default,
+    /// Hyperlink style - used for platforms like  Linear, Slack, Teams
+    /// that support hyperlinks rather than direct content pasting
+    Hyperlink,
+}
+
 /// Represents the type of expansion to perform
 pub enum ExpansionType {
-    Text(String),                           // Expand as text
-    Execute(String),                        // Execute as script/URL/command
-    ExecuteWithParams(String, Vec<String>), // Execute with parameters
+    Text(String, ExpansionStyle, String), // Expand as text with style and original shortcut
+    Execute(String, ExpansionStyle, String), // Execute as script/URL/command with style and original shortcut
+    ExecuteWithParams(String, Vec<String>, ExpansionStyle, String), // Execute with parameters with style and original shortcut
 }
 
 impl fmt::Display for ExpansionType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let formatted = match self {
-            ExpansionType::Text(content) => format!("{}{}", SPECIAL_CHAR, content),
-            ExpansionType::Execute(content) => format!("{}{}", EXECUTE_CHAR, content),
-            ExpansionType::ExecuteWithParams(content, params) => {
+            ExpansionType::Text(content, _, _) => format!("{}{}", SPECIAL_CHAR, content),
+            ExpansionType::Execute(content, _, _) => format!("{}{}", EXECUTE_CHAR, content),
+            ExpansionType::ExecuteWithParams(content, params, _, _) => {
                 let params_str = params.join(",");
                 format!("{}{}({})", EXECUTE_CHAR, content, params_str)
             }
@@ -35,32 +45,136 @@ impl ExpansionType {
     /// Get the content of the expansion type without the prefix character
     pub fn content(&self) -> &str {
         match self {
-            ExpansionType::Text(content) => content,
-            ExpansionType::Execute(content) => content,
-            ExpansionType::ExecuteWithParams(content, _) => content,
+            ExpansionType::Text(content, _, _) => content,
+            ExpansionType::Execute(content, _, _) => content,
+            ExpansionType::ExecuteWithParams(content, _, _, _) => content,
         }
     }
 
     /// Get the parameters for execution, if any
     pub fn params(&self) -> Option<&Vec<String>> {
         match self {
-            ExpansionType::ExecuteWithParams(_, params) => Some(params),
+            ExpansionType::ExecuteWithParams(_, params, _, _) => Some(params),
             _ => None,
+        }
+    }
+
+    /// Get the expansion style
+    pub fn style(&self) -> &ExpansionStyle {
+        match self {
+            ExpansionType::Text(_, style, _) => style,
+            ExpansionType::Execute(_, style, _) => style,
+            ExpansionType::ExecuteWithParams(_, _, style, _) => style,
+        }
+    }
+
+    /// Get the original shortcut (for all variants)
+    pub fn shortcut(&self) -> Option<&str> {
+        match self {
+            ExpansionType::Text(_, _, shortcut) => Some(shortcut),
+            ExpansionType::Execute(_, _, shortcut) => Some(shortcut),
+            ExpansionType::ExecuteWithParams(_, _, _, shortcut) => Some(shortcut),
         }
     }
 
     /// Determine if this is a text expansion
     pub fn is_text(&self) -> bool {
-        matches!(self, ExpansionType::Text(_))
+        matches!(self, ExpansionType::Text(_, _, _))
     }
 
     /// Determine if this is an execution expansion
     pub fn is_execute(&self) -> bool {
         matches!(
             self,
-            ExpansionType::Execute(_) | ExpansionType::ExecuteWithParams(_, _)
+            ExpansionType::Execute(_, _, _) | ExpansionType::ExecuteWithParams(_, _, _, _)
         )
     }
+}
+
+/// Helper function to detect the frontmost application (macOS)
+#[cfg(target_os = "macos")]
+pub fn get_frontmost_app() -> String {
+    // Try to get the frontmost app using AppleScript
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"System Events\" to get name of first process whose frontmost is true")
+        .output();
+
+    if let Ok(output) = output {
+        let app_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return app_name;
+    }
+
+    String::new() // Return empty string if we couldn't determine the app
+}
+
+/// Helper function to detect the frontmost application (Linux)
+#[cfg(target_os = "linux")]
+pub fn get_frontmost_app() -> String {
+    // Try to get active window using xdotool (needs to be installed)
+    let output = Command::new("xdotool")
+        .args(&["getactivewindow", "getwindowname"])
+        .output();
+
+    if let Ok(output) = output {
+        let window_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return window_name;
+    }
+
+    String::new() // Return empty string if we couldn't determine
+}
+
+/// Helper function to detect the frontmost application (Windows)
+#[cfg(target_os = "windows")]
+pub fn get_frontmost_app() -> String {
+    // Try to get active window using PowerShell
+    let output = Command::new("powershell")
+        .args(&[
+            "-Command",
+            "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.ActiveForm]::ActiveForm.Text",
+        ])
+        .output();
+
+    if let Ok(output) = output {
+        let window_name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return window_name;
+    }
+
+    String::new() // Return empty string if we couldn't determine
+}
+
+/// Determine the expansion style based on the current application
+pub fn determine_expansion_style() -> ExpansionStyle {
+    // Get the current app name and normalize to lowercase for case-insensitive matching
+    let app_name = get_frontmost_app().to_lowercase();
+
+    // List of applications that should use the Hyperlink expansion style
+    // Note: This doesn't mean the app supports rich text hyperlinking - we determine
+    // the specific format in format_app_specific_hyperlink based on each app's capabilities
+    let hyperlink_apps = [
+        "linear",
+        "slack",
+        "microsoft teams",
+        "teams",
+        "discord",
+        "telegram",
+        "chrome",
+        "firefox",
+        "safari",
+        "edge",
+        "brave",
+        "opera",
+    ];
+
+    // Check if the current app is in the hyperlink apps list
+    for app in hyperlink_apps.iter() {
+        if app_name.contains(app) {
+            return ExpansionStyle::Hyperlink;
+        }
+    }
+
+    // Default to normal expansion
+    ExpansionStyle::Default
 }
 
 /// Process text buffer to check for text expansion trigger
@@ -80,6 +194,9 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
         return Ok(None);
     }
 
+    // Determine expansion style based on current application
+    let expansion_style = determine_expansion_style();
+
     // Extract the shortcut without the special character
     let shortcut = &buffer[1..];
 
@@ -88,10 +205,18 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
         if entry.shortcut == shortcut {
             if first_char == SPECIAL_CHAR {
                 // Expansion trigger
-                return Ok(Some(ExpansionType::Text(entry.snippet.clone())));
+                return Ok(Some(ExpansionType::Text(
+                    entry.snippet.clone(),
+                    expansion_style,
+                    shortcut.to_string(),
+                )));
             } else if first_char == EXECUTE_CHAR {
                 // Execution trigger
-                return Ok(Some(ExpansionType::Execute(entry.snippet.clone())));
+                return Ok(Some(ExpansionType::Execute(
+                    entry.snippet.clone(),
+                    expansion_style,
+                    shortcut.to_string(),
+                )));
             }
         }
     }
@@ -119,7 +244,12 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
                         // Apply parameter substitution to the snippet content
                         let modified_content = apply_param_mapping(&entry.snippet, &param_map);
 
-                        return Ok(Some(ExpansionType::Execute(modified_content)));
+                        return Ok(Some(ExpansionType::ExecuteWithParams(
+                            modified_content,
+                            params,
+                            expansion_style,
+                            base_shortcut.to_string(),
+                        )));
                     }
                 }
             }
@@ -210,21 +340,128 @@ fn apply_param_mapping(
     result
 }
 
-/// Handle text expansion or script execution
+/// Handle text expansion or script execution based on the expansion style
 pub fn handle_expansion(to_delete: usize, expansion_type: ExpansionType) -> Result<()> {
     match expansion_type {
-        ExpansionType::Text(text) => {
-            // This is the original text expansion behavior
-            replace_text(to_delete, &text)
+        ExpansionType::Text(text, style, shortcut) => {
+            match style {
+                ExpansionStyle::Default => {
+                    // Original text expansion behavior
+                    replace_text(to_delete, &text)
+                }
+                ExpansionStyle::Hyperlink => {
+                    // For platforms that support hyperlinks, transform to a hyperlink
+                    // Check if the text looks like a URL
+                    if text.starts_with("http://")
+                        || text.starts_with("https://")
+                        || text.starts_with("www.")
+                    {
+                        // Get the app name for platform-specific formatting
+                        let app_name = get_frontmost_app();
+
+                        // Use the original shortcut as the display text
+                        let hyperlink = format_app_specific_hyperlink(&app_name, &shortcut, &text);
+                        replace_text(to_delete, &hyperlink)
+                    } else {
+                        // For non-URLs, just use the original expansion
+                        replace_text(to_delete, &text)
+                    }
+                }
+            }
         }
-        ExpansionType::Execute(content) => {
-            // Execute the snippet content without parameters
-            execute_snippet(to_delete, &content, None)
+        ExpansionType::Execute(content, style, shortcut) => {
+            match style {
+                ExpansionStyle::Default => {
+                    // Original execution behavior
+                    execute_snippet(to_delete, &content, None)
+                }
+                ExpansionStyle::Hyperlink => {
+                    // For URLs specifically, we can format as a hyperlink
+                    if content.starts_with("http://")
+                        || content.starts_with("https://")
+                        || content.starts_with("www.")
+                    {
+                        // Get the app name for platform-specific formatting
+                        let app_name = get_frontmost_app();
+
+                        // Format hyperlink based on the app
+                        let hyperlink =
+                            format_app_specific_hyperlink(&app_name, &shortcut, &content);
+                        replace_text(to_delete, &hyperlink)
+                    } else {
+                        // Fall back to default behavior for non-URLs
+                        execute_snippet(to_delete, &content, None)
+                    }
+                }
+            }
         }
-        ExpansionType::ExecuteWithParams(content, params) => {
-            // Execute the snippet content with parameters
-            execute_snippet(to_delete, &content, Some(&params))
+        ExpansionType::ExecuteWithParams(content, params, style, shortcut) => {
+            match style {
+                ExpansionStyle::Default => {
+                    // Original parameterized execution behavior
+                    execute_snippet(to_delete, &content, Some(&params))
+                }
+                ExpansionStyle::Hyperlink => {
+                    // Similar handling as Execute
+                    if content.starts_with("http://")
+                        || content.starts_with("https://")
+                        || content.starts_with("www.")
+                    {
+                        // Get the app name for platform-specific formatting
+                        let app_name = get_frontmost_app();
+
+                        // Format hyperlink based on the app
+                        let hyperlink =
+                            format_app_specific_hyperlink(&app_name, &shortcut, &content);
+                        replace_text(to_delete, &hyperlink)
+                    } else {
+                        // Fall back to default behavior for non-URLs
+                        execute_snippet(to_delete, &content, Some(&params))
+                    }
+                }
+            }
         }
+    }
+}
+
+/// Format a hyperlink based on the specific application's native link format
+fn format_app_specific_hyperlink(app_name: &str, display_text: &str, url: &str) -> String {
+    // Normalize the app name to lowercase for case-insensitive matching
+    let app_name = app_name.to_lowercase();
+
+    // Different apps use different hyperlink formats based on their native link creation methods
+    if app_name.contains("slack") {
+        // Slack doesn't support rich text hyperlinking in the composer
+        // Just return the raw URL as Slack will auto-format it
+        url.to_string()
+    } else if app_name.contains("teams") || app_name.contains("microsoft") {
+        // Microsoft Teams format: [display text](url) - Teams uses markdown format
+        format!("[{}]({})", display_text, url)
+    } else if app_name.contains("discord") {
+        // Discord format: [display text](url) - Discord uses markdown format
+        format!("[{}]({})", display_text, url)
+    } else if app_name.contains("linear") {
+        // Linear uses markdown format: [display text](url)
+        format!("[{}]({})", display_text, url)
+    } else if app_name.contains("telegram") {
+        // Telegram has inconsistent support for markdown links across clients
+        // Just return the raw URL to be safe
+        url.to_string()
+    } else if app_name.contains("chrome")
+        || app_name.contains("firefox")
+        || app_name.contains("safari")
+        || app_name.contains("edge")
+        || app_name.contains("brave")
+        || app_name.contains("opera")
+    {
+        // For browsers, just use the URL itself as they don't support special formatting
+        url.to_string()
+    } else if app_name.contains("outlook") || app_name.contains("mail") {
+        // Outlook and most email clients support HTML links
+        format!("<a href=\"{}\">{}</a>", url, display_text)
+    } else {
+        // Default to raw URL for unknown apps to ensure compatibility
+        url.to_string()
     }
 }
 
@@ -292,4 +529,252 @@ pub fn replace_text(to_delete: usize, replacement: &str) -> Result<()> {
     type_text_with_formatting(&mut keyboard, replacement)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::SnippetEntry;
+
+    #[test]
+    fn test_determine_expansion_style() {
+        // Override get_frontmost_app for testing
+        assert!(matches!(
+            determine_expansion_style_with_app("linear"),
+            ExpansionStyle::Hyperlink
+        ));
+        assert!(matches!(
+            determine_expansion_style_with_app("slack"),
+            ExpansionStyle::Hyperlink
+        ));
+        assert!(matches!(
+            determine_expansion_style_with_app("Microsoft Teams"),
+            ExpansionStyle::Hyperlink
+        ));
+        assert!(matches!(
+            determine_expansion_style_with_app("Google Chrome"),
+            ExpansionStyle::Hyperlink
+        ));
+        assert!(matches!(
+            determine_expansion_style_with_app("Firefox"),
+            ExpansionStyle::Hyperlink
+        ));
+        assert!(matches!(
+            determine_expansion_style_with_app("Safari"),
+            ExpansionStyle::Hyperlink
+        ));
+
+        // Test with non-hyperlink apps
+        assert!(matches!(
+            determine_expansion_style_with_app("terminal"),
+            ExpansionStyle::Default
+        ));
+        assert!(matches!(
+            determine_expansion_style_with_app("vscode"),
+            ExpansionStyle::Default
+        ));
+    }
+
+    // Test helper that allows us to inject a specific app name
+    fn determine_expansion_style_with_app(app_name: &str) -> ExpansionStyle {
+        // List of applications that should use the Hyperlink expansion style
+        // Note: This doesn't mean the app supports rich text hyperlinking - we determine
+        // the specific format in format_app_specific_hyperlink based on each app's capabilities
+        let hyperlink_apps = [
+            "linear",
+            "slack",
+            "microsoft teams",
+            "teams",
+            "discord",
+            "telegram",
+            "chrome",
+            "firefox",
+            "safari",
+            "edge",
+            "brave",
+            "opera",
+        ];
+
+        // Check if the current app is in the hyperlink apps list - normalize to lowercase
+        let app_name = app_name.to_lowercase();
+
+        for app in hyperlink_apps.iter() {
+            if app_name.contains(app) {
+                return ExpansionStyle::Hyperlink;
+            }
+        }
+
+        // Default to normal expansion
+        ExpansionStyle::Default
+    }
+
+    #[test]
+    fn test_hyperlink_expansion() {
+        let snippets = vec![
+            SnippetEntry {
+                shortcut: "hello".to_string(),
+                snippet: "Hello, world!".to_string(),
+                timestamp: "2023-01-01T00:00:00+00:00".to_string(),
+            },
+            SnippetEntry {
+                shortcut: "link".to_string(),
+                snippet: "https://example.com".to_string(),
+                timestamp: "2023-01-01T00:00:00+00:00".to_string(),
+            },
+        ];
+
+        // In our tests, use the actual SPECIAL_CHAR constant from config
+        let buffer_special = format!("{}hello", SPECIAL_CHAR);
+
+        // Test normal expansion in default apps
+        let result =
+            process_expansion_with_style(&buffer_special, &snippets, ExpansionStyle::Default)
+                .unwrap();
+        assert!(result.is_some());
+        let expansion = result.unwrap();
+        assert!(matches!(
+            expansion,
+            ExpansionType::Text(_, ExpansionStyle::Default, _)
+        ));
+        assert_eq!(expansion.content(), "Hello, world!");
+
+        // Test hyperlink expansion in specific apps
+        let result =
+            process_expansion_with_style(&buffer_special, &snippets, ExpansionStyle::Hyperlink)
+                .unwrap();
+        assert!(result.is_some());
+        let expansion = result.unwrap();
+        assert!(matches!(
+            expansion,
+            ExpansionType::Text(_, ExpansionStyle::Hyperlink, _)
+        ));
+        assert_eq!(expansion.content(), "Hello, world!");
+
+        // Also test URL expansion
+        let buffer_url = format!("{}link", EXECUTE_CHAR);
+        let result =
+            process_expansion_with_style(&buffer_url, &snippets, ExpansionStyle::Hyperlink)
+                .unwrap();
+        assert!(result.is_some());
+        let expansion = result.unwrap();
+        assert!(matches!(
+            expansion,
+            ExpansionType::Execute(_, ExpansionStyle::Hyperlink, _)
+        ));
+        assert_eq!(expansion.content(), "https://example.com");
+        assert_eq!(expansion.shortcut().unwrap(), "link");
+    }
+
+    // Test helper that allows us to inject a specific expansion style
+    fn process_expansion_with_style(
+        buffer: &str,
+        snippets: &[SnippetEntry],
+        style: ExpansionStyle,
+    ) -> Result<Option<ExpansionType>> {
+        // This is similar to the real process_expansion but allows us to
+        // specify the expansion style directly for testing
+
+        // Check if the buffer starts with the special character
+        if buffer.is_empty() {
+            return Ok(None);
+        }
+
+        let first_char = buffer.chars().next().unwrap();
+
+        if first_char != SPECIAL_CHAR && first_char != EXECUTE_CHAR {
+            return Ok(None);
+        }
+
+        if buffer.len() <= 1 {
+            return Ok(None);
+        }
+
+        // Use the provided expansion style instead of determining it
+        let expansion_style = style;
+
+        // Extract the shortcut without the special character
+        let shortcut = &buffer[1..];
+
+        // Look for exact matches
+        for entry in snippets {
+            if entry.shortcut == shortcut {
+                if first_char == SPECIAL_CHAR {
+                    // Expansion trigger
+                    return Ok(Some(ExpansionType::Text(
+                        entry.snippet.clone(),
+                        expansion_style,
+                        shortcut.to_string(),
+                    )));
+                } else if first_char == EXECUTE_CHAR {
+                    // Execution trigger
+                    return Ok(Some(ExpansionType::Execute(
+                        entry.snippet.clone(),
+                        expansion_style,
+                        shortcut.to_string(),
+                    )));
+                }
+            }
+        }
+
+        // No matching shortcut found
+        Ok(None)
+    }
+
+    #[test]
+    fn test_hyperlink_formatting() {
+        // Test app-specific hyperlink formats with different casing
+        // Slack doesn't support rich text hyperlinking - returns raw URL
+        assert_eq!(
+            format_app_specific_hyperlink("SlAcK", "google", "https://example.com"),
+            "https://example.com"
+        );
+
+        // Discord uses markdown format [text](url)
+        assert_eq!(
+            format_app_specific_hyperlink("DisCoRd", "google", "https://example.com"),
+            "[google](https://example.com)"
+        );
+
+        // Test case for Microsoft Teams with mixed casing - uses markdown format
+        assert_eq!(
+            format_app_specific_hyperlink("MicroSoft TEAMS", "google", "https://example.com"),
+            "[google](https://example.com)"
+        );
+
+        // Test case for Linear - uses markdown format
+        assert_eq!(
+            format_app_specific_hyperlink("Linear", "google", "https://example.com"),
+            "[google](https://example.com)"
+        );
+
+        // Test case for Telegram - returns raw URL due to inconsistent client support
+        assert_eq!(
+            format_app_specific_hyperlink("Telegram", "google", "https://example.com"),
+            "https://example.com"
+        );
+
+        // Test case for browsers - should return raw URL
+        assert_eq!(
+            format_app_specific_hyperlink("Google Chrome", "google", "https://example.com"),
+            "https://example.com"
+        );
+
+        // Test case for Safari - should return raw URL
+        assert_eq!(
+            format_app_specific_hyperlink("Safari", "google", "https://example.com"),
+            "https://example.com"
+        );
+
+        // Test case for email clients - uses HTML format
+        assert_eq!(
+            format_app_specific_hyperlink("Outlook", "google", "https://example.com"),
+            "<a href=\"https://example.com\">google</a>"
+        );
+
+        // Test default case for unknown apps - should return raw URL
+        assert_eq!(
+            format_app_specific_hyperlink("Unknown App", "google", "https://example.com"),
+            "https://example.com"
+        );
+    }
 }

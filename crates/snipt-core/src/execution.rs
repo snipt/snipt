@@ -13,7 +13,7 @@ use crate::keyboard::{create_keyboard_controller, send_backspace};
 use crate::{Result, SniptError};
 
 /// Determine if a string is a URL
-fn is_url(content: &str) -> bool {
+pub fn is_url(content: &str) -> bool {
     let content = content.trim();
 
     // Check for explicit protocols
