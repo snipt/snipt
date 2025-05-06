@@ -75,8 +75,8 @@ pub fn type_text(keyboard: &mut Enigo, text: &str) -> Result<()> {
 /// Send backspace key presses
 pub fn send_backspace(keyboard: &mut Enigo, count: usize) -> Result<()> {
     for _ in 0..count {
-        // Small delay to ensure key presses are registered
-        thread::sleep(Duration::from_millis(5));
+        // Reduced delay to speed up deletion
+        thread::sleep(Duration::from_millis(2));
 
         // Use the key method with Direction::Click for Enigo 0.3.0
         match keyboard.key(Key::Backspace, Direction::Click) {

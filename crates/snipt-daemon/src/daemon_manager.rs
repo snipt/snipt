@@ -53,7 +53,7 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
             let daemon_log_file = format!("{}/daemon_log.txt", get_config_dir().to_string_lossy());
 
             let cmd = format!(
-                "nohup {} daemon-worker > {} 2>&1 &",
+                "nohup \"{}\" daemon-worker > \"{}\" 2>&1 &",
                 current_exe.to_string_lossy(),
                 daemon_log_file
             );
@@ -162,7 +162,7 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
         let log_file = format!("{}/api_server_log.txt", get_config_dir().to_string_lossy());
 
         let cmd = format!(
-            "nohup {} serve --port {} > {} 2>&1 &",
+            "nohup \"{}\" serve --port {} > \"{}\" 2>&1 &",
             current_exe.to_string_lossy(),
             current_port,
             log_file
@@ -174,10 +174,7 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
         thread::sleep(Duration::from_secs(2));
         if !port_is_available(current_port) {
             println!("API server started on port {}.", current_port);
-            println!(
-                "You can access the server at: http://localhost:{}",
-                current_port
-            );
+            println!("You can access the server at: http://localhost:{}", current_port);
             Ok(())
         } else {
             Err(SniptError::Other(format!(
@@ -205,10 +202,7 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
         thread::sleep(Duration::from_secs(2));
         if !port_is_available(current_port) {
             println!("API server started on port {}.", current_port);
-            println!(
-                "You can access the server at: http://localhost:{}",
-                current_port
-            );
+            println!("You can access the server at: http://localhost:{}", current_port);
             return Ok(());
         } else {
             return Err(SniptError::Other(format!(

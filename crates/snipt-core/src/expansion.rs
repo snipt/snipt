@@ -179,13 +179,12 @@ pub fn determine_expansion_style() -> ExpansionStyle {
 
 /// Process text buffer to check for text expansion trigger
 pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Option<ExpansionType>> {
-    // Check if the buffer starts with the special character
+    // Check if the buffer is valid for expansion
     if buffer.is_empty() {
         return Ok(None);
     }
 
     let first_char = buffer.chars().next().unwrap();
-
     if first_char != SPECIAL_CHAR && first_char != EXECUTE_CHAR {
         return Ok(None);
     }
@@ -194,45 +193,45 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
         return Ok(None);
     }
 
-    // Determine expansion style based on current application
-    let expansion_style = determine_expansion_style();
-
     // Extract the shortcut without the special character
     let shortcut = &buffer[1..];
+    
+    // Determine expansion style based on current application
+    let expansion_style = determine_expansion_style();
 
     // Look for exact matches first (original behavior)
     for entry in snippets {
         if entry.shortcut == shortcut {
-            if first_char == SPECIAL_CHAR {
+            return if first_char == SPECIAL_CHAR {
                 // Expansion trigger
-                return Ok(Some(ExpansionType::Text(
+                Ok(Some(ExpansionType::Text(
                     entry.snippet.clone(),
                     expansion_style,
                     shortcut.to_string(),
-                )));
+                )))
             } else if first_char == EXECUTE_CHAR {
                 // Execution trigger
-                return Ok(Some(ExpansionType::Execute(
+                Ok(Some(ExpansionType::Execute(
                     entry.snippet.clone(),
                     expansion_style,
                     shortcut.to_string(),
-                )));
-            }
+                )))
+            } else {
+                // Unreachable based on our earlier filter, but here for safety
+                Ok(None)
+            };
         }
     }
 
-    // Look for shortcuts with parameter placeholders like "sum(a,b)"
-    if first_char == EXECUTE_CHAR {
-        // Check for both parameterized shortcut definitions and actual values
+    // Only check for parameterized snippets if relevant
+    if first_char == EXECUTE_CHAR && shortcut.contains('(') && shortcut.ends_with(')') {
+        // Look for shortcuts with parameter placeholders like "sum(a,b)"
         for entry in snippets {
             if let Some(base_shortcut) = extract_base_shortcut(&entry.shortcut) {
                 // This is a shortcut with parameter syntax like "sum(a,b)"
 
                 // Check if the current input starts with this base shortcut
-                if shortcut.starts_with(base_shortcut)
-                    && shortcut.contains('(')
-                    && shortcut.ends_with(')')
-                {
+                if shortcut.starts_with(base_shortcut) {
                     // Extract parameters from the user input
                     if let Some(params) = extract_params_from_input(shortcut) {
                         // Extract placeholders from the shortcut definition
@@ -325,8 +324,14 @@ fn apply_param_mapping(
     content: &str,
     param_map: &std::collections::HashMap<String, String>,
 ) -> String {
+    // Early return if there are no parameters or the content is empty
+    if param_map.is_empty() || content.is_empty() {
+        return content.to_string();
+    }
+
     let mut result = content.to_string();
 
+    // Apply all replacements in a single pass
     for (placeholder, value) in param_map {
         // Replace ${placeholder} with value
         let placeholder_pattern = format!("${{{}}}", placeholder);
@@ -430,44 +435,23 @@ fn format_app_specific_hyperlink(app_name: &str, display_text: &str, url: &str) 
     let app_name = app_name.to_lowercase();
 
     // Different apps use different hyperlink formats based on their native link creation methods
-    if app_name.contains("slack") {
-        // Slack doesn't support rich text hyperlinking in the composer
-        // Just return the raw URL as Slack will auto-format it
-        url.to_string()
-    } else if app_name.contains("teams") || app_name.contains("microsoft") {
-        // Microsoft Teams format: [display text](url) - Teams uses markdown format
+    if app_name.contains("teams") || app_name.contains("microsoft") || app_name.contains("discord") || app_name.contains("linear") {
+        // These apps all use markdown format: [display text](url)
         format!("[{}]({})", display_text, url)
-    } else if app_name.contains("discord") {
-        // Discord format: [display text](url) - Discord uses markdown format
-        format!("[{}]({})", display_text, url)
-    } else if app_name.contains("linear") {
-        // Linear uses markdown format: [display text](url)
-        format!("[{}]({})", display_text, url)
-    } else if app_name.contains("telegram") {
-        // Telegram has inconsistent support for markdown links across clients
-        // Just return the raw URL to be safe
-        url.to_string()
-    } else if app_name.contains("chrome")
-        || app_name.contains("firefox")
-        || app_name.contains("safari")
-        || app_name.contains("edge")
-        || app_name.contains("brave")
-        || app_name.contains("opera")
-    {
-        // For browsers, just use the URL itself as they don't support special formatting
-        url.to_string()
     } else if app_name.contains("outlook") || app_name.contains("mail") {
         // Outlook and most email clients support HTML links
         format!("<a href=\"{}\">{}</a>", url, display_text)
     } else {
-        // Default to raw URL for unknown apps to ensure compatibility
+        // Default to raw URL for all other apps (slack, telegram, browsers, etc.)
+        // This is most compatible and often fastest option
         url.to_string()
     }
 }
 
 pub fn type_text_with_formatting(keyboard: &mut impl Keyboard, text: &str) -> Result<()> {
     // Set a reasonable chunk size to avoid overwhelming the keyboard buffer
-    const CHUNK_SIZE: usize = 512;
+    // Increased chunk size for better performance
+    const CHUNK_SIZE: usize = 1024;
 
     // Split into lines and type each line with proper newlines
     for (i, line) in text.split('\n').enumerate() {
@@ -483,8 +467,8 @@ pub fn type_text_with_formatting(keyboard: &mut impl Keyboard, text: &str) -> Re
                 }
             }
 
-            // Small delay after newline to ensure it registers properly
-            thread::sleep(Duration::from_millis(15));
+            // Reduced delay after newline
+            thread::sleep(Duration::from_millis(5));
         }
 
         // If line is very long, split it into manageable chunks
@@ -498,8 +482,8 @@ pub fn type_text_with_formatting(keyboard: &mut impl Keyboard, text: &str) -> Re
                     }
                 }
 
-                // Small delay between chunks
-                thread::sleep(Duration::from_millis(20));
+                // Reduced delay between chunks
+                thread::sleep(Duration::from_millis(5));
             }
         } else if !line.is_empty() {
             // Type the line content directly if it's short
@@ -508,8 +492,8 @@ pub fn type_text_with_formatting(keyboard: &mut impl Keyboard, text: &str) -> Re
                 Err(err) => return Err(SniptError::Enigo(format!("Failed to type text: {}", err))),
             }
         }
-        // Small delay after each line for reliability
-        thread::sleep(Duration::from_millis(10));
+        // Reduced delay after each line for reliability
+        thread::sleep(Duration::from_millis(2));
     }
 
     Ok(())
@@ -522,8 +506,8 @@ pub fn replace_text(to_delete: usize, replacement: &str) -> Result<()> {
     // Delete the text (shortcut and the special character)
     send_backspace(&mut keyboard, to_delete)?;
 
-    // Small delay before typing the replacement
-    thread::sleep(Duration::from_millis(10));
+    // Minimal delay before typing the replacement (reduced from 10ms)
+    thread::sleep(Duration::from_millis(3));
 
     // Type the expanded text with formatting preserved
     type_text_with_formatting(&mut keyboard, replacement)?;
