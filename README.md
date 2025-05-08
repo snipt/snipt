@@ -132,6 +132,24 @@ snipt consists of several components:
 - Rust 1.56+
 - Core dependencies: rdev, clap, serde, crossterm, ratatui, enigo, arboard
 
+### System Dependencies
+
+#### Linux (Ubuntu/Debian)
+```bash
+sudo apt-get update
+sudo apt-get install -y libx11-dev pkg-config
+```
+
+#### Linux (Fedora/RHEL)
+```bash
+sudo dnf install libX11-devel pkg-config
+```
+
+#### Linux (Arch Linux)
+```bash
+sudo pacman -S libx11 pkg-config
+```
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to:
