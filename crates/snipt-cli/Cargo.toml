@@ -15,10 +15,10 @@ name = "snipt"
 path = "src/main.rs"
 
 [dependencies]
-snipt-core = { path = "../snipt-core" }
-snipt-server = { path = "../snipt-server" }
-snipt-ui = { path = "../snipt-ui" }
-snipt-daemon = { path = "../snipt-daemon" }
+snipt-core = { version = "0.1.0", path = "../snipt-core" }
+snipt-server = { version = "0.1.0", path = "../snipt-server" }
+snipt-ui = { version = "0.1.0", path = "../snipt-ui" }
+snipt-daemon = { version = "0.1.0", path = "../snipt-daemon" }
 clap = { workspace = true }
 tokio = { workspace = true }
 crossterm = { workspace = true }

@@ -10,7 +10,7 @@ keywords = ["server", "clipboard", "automation", "productivity"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
-snipt-core = { path = "../snipt-core" }
+snipt-core = { version = "0.1.0", path = "../snipt-core" }
 serde = { workspace = true }
 tokio = { workspace = true }
 warp = { workspace = true }

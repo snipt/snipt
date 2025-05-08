@@ -10,7 +10,7 @@ keywords = ["ui", "tui", "clipboard", "automation", "productivity"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
-snipt-core = { path = "../snipt-core" }
+snipt-core = { version = "0.1.0", path = "../snipt-core" }
 crossterm = { workspace = true }
 ratatui = { workspace = true }
 arboard = { workspace = true }
