@@ -174,7 +174,10 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
         thread::sleep(Duration::from_secs(2));
         if !port_is_available(current_port) {
             println!("API server started on port {}.", current_port);
-            println!("You can access the server at: http://localhost:{}", current_port);
+            println!(
+                "You can access the server at: http://localhost:{}",
+                current_port
+            );
             Ok(())
         } else {
             Err(SniptError::Other(format!(
@@ -202,7 +205,10 @@ pub fn start_daemon(api_port: u16) -> Result<()> {
         thread::sleep(Duration::from_secs(2));
         if !port_is_available(current_port) {
             println!("API server started on port {}.", current_port);
-            println!("You can access the server at: http://localhost:{}", current_port);
+            println!(
+                "You can access the server at: http://localhost:{}",
+                current_port
+            );
             return Ok(());
         } else {
             return Err(SniptError::Other(format!(

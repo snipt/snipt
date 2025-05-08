@@ -195,7 +195,7 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
 
     // Extract the shortcut without the special character
     let shortcut = &buffer[1..];
-    
+
     // Determine expansion style based on current application
     let expansion_style = determine_expansion_style();
 
@@ -225,30 +225,35 @@ pub fn process_expansion(buffer: &str, snippets: &[SnippetEntry]) -> Result<Opti
 
     // Only check for parameterized snippets if relevant
     if first_char == EXECUTE_CHAR && shortcut.contains('(') && shortcut.ends_with(')') {
-        // Look for shortcuts with parameter placeholders like "sum(a,b)"
-        for entry in snippets {
-            if let Some(base_shortcut) = extract_base_shortcut(&entry.shortcut) {
-                // This is a shortcut with parameter syntax like "sum(a,b)"
+        // Extract the base shortcut from the input (without parameters)
+        if let Some(input_base) = extract_base_shortcut(shortcut) {
+            // Look for matching base shortcuts
+            for entry in snippets {
+                // Check if the snippet entry has parameters (contains '(' and ')')
+                if entry.shortcut.contains('(') && entry.shortcut.contains(')') {
+                    if let Some(entry_base) = extract_base_shortcut(&entry.shortcut) {
+                        // Compare the base parts (without parameters)
+                        if input_base == entry_base {
+                            // Extract parameters from the user input
+                            if let Some(params) = extract_params_from_input(shortcut) {
+                                // Extract placeholders from the shortcut definition
+                                let placeholders = extract_placeholders(&entry.shortcut);
 
-                // Check if the current input starts with this base shortcut
-                if shortcut.starts_with(base_shortcut) {
-                    // Extract parameters from the user input
-                    if let Some(params) = extract_params_from_input(shortcut) {
-                        // Extract placeholders from the shortcut definition
-                        let placeholders = extract_placeholders(&entry.shortcut);
+                                // Create a mapping from placeholders to actual values
+                                let param_map = create_param_mapping(&placeholders, &params);
 
-                        // Create a mapping from placeholders to actual values
-                        let param_map = create_param_mapping(&placeholders, &params);
+                                // Apply parameter substitution to the snippet content
+                                let modified_content =
+                                    apply_param_mapping(&entry.snippet, &param_map);
 
-                        // Apply parameter substitution to the snippet content
-                        let modified_content = apply_param_mapping(&entry.snippet, &param_map);
-
-                        return Ok(Some(ExpansionType::ExecuteWithParams(
-                            modified_content,
-                            params,
-                            expansion_style,
-                            base_shortcut.to_string(),
-                        )));
+                                return Ok(Some(ExpansionType::ExecuteWithParams(
+                                    modified_content,
+                                    params,
+                                    expansion_style,
+                                    entry_base.to_string(),
+                                )));
+                            }
+                        }
                     }
                 }
             }
@@ -276,10 +281,17 @@ fn extract_params_from_input(input: &str) -> Option<Vec<String>> {
         if let Some(close_idx) = input.rfind(')') {
             if close_idx > open_idx {
                 let params_str = &input[open_idx + 1..close_idx];
+                // Handle empty params case
+                if params_str.trim().is_empty() {
+                    return Some(Vec::new());
+                }
+
                 let params: Vec<String> = params_str
                     .split(',')
                     .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty()) // Filter out empty strings
                     .collect();
+
                 return Some(params);
             }
         }
@@ -340,6 +352,28 @@ fn apply_param_mapping(
         // Also replace $placeholder with value
         let simple_pattern = format!("${}", placeholder);
         result = result.replace(&simple_pattern, value);
+
+        // Also replace positional placeholders if placeholder is numeric
+        if let Ok(pos) = placeholder.parse::<usize>() {
+            // Replace $1, $2, etc.
+            let pos_pattern = format!("${}", pos);
+            result = result.replace(&pos_pattern, value);
+
+            // Replace ${1}, ${2}, etc.
+            let pos_brace_pattern = format!("${{{}}}", pos);
+            result = result.replace(&pos_brace_pattern, value);
+        }
+    }
+
+    // Handle $* (all parameters) if present in content
+    if result.contains("$*") || result.contains("${*}") {
+        let all_values = param_map
+            .values()
+            .cloned()
+            .collect::<Vec<String>>()
+            .join(" ");
+        result = result.replace("$*", &all_values);
+        result = result.replace("${*}", &all_values);
     }
 
     result
@@ -435,7 +469,11 @@ fn format_app_specific_hyperlink(app_name: &str, display_text: &str, url: &str) 
     let app_name = app_name.to_lowercase();
 
     // Different apps use different hyperlink formats based on their native link creation methods
-    if app_name.contains("teams") || app_name.contains("microsoft") || app_name.contains("discord") || app_name.contains("linear") {
+    if app_name.contains("teams")
+        || app_name.contains("microsoft")
+        || app_name.contains("discord")
+        || app_name.contains("linear")
+    {
         // These apps all use markdown format: [display text](url)
         format!("[{}]({})", display_text, url)
     } else if app_name.contains("outlook") || app_name.contains("mail") {
@@ -760,5 +798,93 @@ mod tests {
             format_app_specific_hyperlink("Unknown App", "google", "https://example.com"),
             "https://example.com"
         );
+    }
+
+    #[test]
+    fn test_parameterized_shortcuts() {
+        let snippets = vec![
+            SnippetEntry {
+                shortcut: "sum(a,b)".to_string(),
+                snippet: "The sum of $a and $b is ${a+b}".to_string(),
+                timestamp: "2023-01-01T00:00:00+00:00".to_string(),
+            },
+            SnippetEntry {
+                shortcut: "greet(name)".to_string(),
+                snippet: "Hello, $name!".to_string(),
+                timestamp: "2023-01-01T00:00:00+00:00".to_string(),
+            },
+        ];
+
+        // Test parameterized expansion with sum
+        let buffer_sum = format!("{}sum(10,20)", EXECUTE_CHAR);
+        let result = process_expansion(&buffer_sum, &snippets).unwrap();
+        assert!(result.is_some());
+        let expansion = result.unwrap();
+        assert!(matches!(
+            expansion,
+            ExpansionType::ExecuteWithParams(_, _, _, _)
+        ));
+
+        if let ExpansionType::ExecuteWithParams(content, params, _, shortcut) = expansion {
+            assert_eq!(content, "The sum of 10 and 20 is ${a+b}");
+            assert_eq!(params, vec!["10".to_string(), "20".to_string()]);
+            assert_eq!(shortcut, "sum");
+        }
+
+        // Test parameterized expansion with greet
+        let buffer_greet = format!("{}greet(World)", EXECUTE_CHAR);
+        let result = process_expansion(&buffer_greet, &snippets).unwrap();
+        assert!(result.is_some());
+        let expansion = result.unwrap();
+        assert!(matches!(
+            expansion,
+            ExpansionType::ExecuteWithParams(_, _, _, _)
+        ));
+
+        if let ExpansionType::ExecuteWithParams(content, params, _, shortcut) = expansion {
+            assert_eq!(content, "Hello, World!");
+            assert_eq!(params, vec!["World".to_string()]);
+            assert_eq!(shortcut, "greet");
+        }
+    }
+
+    #[test]
+    fn test_parameter_mapping() {
+        // Test basic parameter mapping
+        let mut map = std::collections::HashMap::new();
+        map.insert("name".to_string(), "John".to_string());
+        map.insert("age".to_string(), "30".to_string());
+
+        let content = "Name: $name, Age: $age, Name with braces: ${name}";
+        let result = apply_param_mapping(content, &map);
+        assert_eq!(result, "Name: John, Age: 30, Name with braces: John");
+
+        // Test positional parameters
+        let mut map = std::collections::HashMap::new();
+        map.insert("1".to_string(), "First".to_string());
+        map.insert("2".to_string(), "Second".to_string());
+
+        let content = "First: $1, Second: $2, First with braces: ${1}";
+        let result = apply_param_mapping(content, &map);
+        assert_eq!(
+            result,
+            "First: First, Second: Second, First with braces: First"
+        );
+
+        // Test all parameters wildcard
+        let mut map = std::collections::HashMap::new();
+        map.insert("a".to_string(), "one".to_string());
+        map.insert("b".to_string(), "two".to_string());
+        map.insert("c".to_string(), "three".to_string());
+
+        let content = "All params: $*, All params with braces: ${*}";
+        let result = apply_param_mapping(content, &map);
+
+        // Note: order might vary due to HashMap, so we check parts
+        assert!(result.contains("one"));
+        assert!(result.contains("two"));
+        assert!(result.contains("three"));
+        assert!(result.starts_with("All params: "));
+        assert!(result.contains("All params with braces: "));
     }
 }

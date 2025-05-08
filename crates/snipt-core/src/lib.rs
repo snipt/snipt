@@ -1,3 +1,4 @@
+pub mod clipboard;
 pub mod config;
 pub mod error;
 pub mod execution;
@@ -7,6 +8,7 @@ pub mod models;
 pub mod storage;
 
 // Re-export common items for convenience
+pub use clipboard::{get_clipboard_text, has_clipboard_text, set_clipboard_text};
 pub use config::{get_config_dir, is_daemon_running, EXECUTE_CHAR, SPECIAL_CHAR};
 pub use error::{Result, SniptError};
 pub use execution::is_url;

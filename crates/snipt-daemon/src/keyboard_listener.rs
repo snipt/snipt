@@ -1,4 +1,5 @@
 use rdev::{self, EventType, Key as RdevKey};
+use snipt_core::clipboard::get_clipboard_text;
 use snipt_core::config::{EXECUTE_CHAR, SPECIAL_CHAR};
 use snipt_core::expansion::process_expansion;
 use snipt_core::handle_expansion;
@@ -21,6 +22,12 @@ pub fn start_keyboard_listener(
     let just_expanded = Arc::new(Mutex::new(false));
     let expanded_flag_clone = Arc::clone(&just_expanded);
 
+    // Track modifier key states
+    let cmd_pressed = Arc::new(Mutex::new(false));
+    let ctrl_pressed = Arc::new(Mutex::new(false));
+    let cmd_clone = Arc::clone(&cmd_pressed);
+    let ctrl_clone = Arc::clone(&ctrl_pressed);
+
     // Clone for the thread
     let snippets_clone = Arc::clone(&snippets);
     let running_clone = Arc::clone(&running);
@@ -32,9 +39,82 @@ pub fn start_keyboard_listener(
                 return;
             }
 
+            // Update modifier key states
+            match event.event_type {
+                EventType::KeyPress(key) => match key {
+                    RdevKey::MetaLeft | RdevKey::MetaRight => {
+                        *cmd_clone.lock().unwrap() = true;
+                    }
+                    RdevKey::ControlLeft | RdevKey::ControlRight => {
+                        *ctrl_clone.lock().unwrap() = true;
+                    }
+                    _ => {}
+                },
+                EventType::KeyRelease(key) => match key {
+                    RdevKey::MetaLeft | RdevKey::MetaRight => {
+                        *cmd_clone.lock().unwrap() = false;
+                    }
+                    RdevKey::ControlLeft | RdevKey::ControlRight => {
+                        *ctrl_clone.lock().unwrap() = false;
+                    }
+                    _ => {}
+                },
+                _ => {} // Handle all other event types
+            }
             if let EventType::KeyPress(key) = event.event_type {
                 let mut buffer = buffer_clone.lock().unwrap();
                 let mut just_expanded = expanded_flag_clone.lock().unwrap();
+
+                // Handle paste command (Cmd+V on macOS, Ctrl+V on other platforms)
+                let is_paste = match key {
+                    RdevKey::KeyV => {
+                        #[cfg(target_os = "macos")]
+                        {
+                            *cmd_clone.lock().unwrap()
+                        }
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            *ctrl_clone.lock().unwrap()
+                        }
+                    }
+                    _ => false,
+                };
+
+                if is_paste {
+                    // Try to get clipboard content
+                    if let Ok(clipboard_text) = get_clipboard_text() {
+                        // Add all characters from the clipboard to the buffer at once
+                        for c in clipboard_text.chars() {
+                            buffer.push((c, Instant::now()));
+                        }
+
+                        // Check for expansion only once after the entire paste
+                        let buffer_text: String = buffer.iter().map(|(c, _)| *c).collect();
+                        let snippets_guard = snippets_clone.lock().unwrap();
+
+                        if let Ok(Some(expansion)) =
+                            process_expansion(&buffer_text, &snippets_guard)
+                        {
+                            // Found a matching expansion pattern!
+                            let chars_to_delete = buffer_text.len();
+
+                            // Handle the expansion or execution
+                            let _ = handle_expansion(chars_to_delete, expansion);
+
+                            // Set flag that we just expanded/executed
+                            *just_expanded = true;
+
+                            // Clear buffer completely
+                            buffer.clear();
+                            return;
+                        }
+
+                        // If we didn't expand, we should keep the buffer for potential future matches
+                        if !*just_expanded {
+                            return;
+                        }
+                    }
+                }
 
                 // Handle special keys
                 match key {
