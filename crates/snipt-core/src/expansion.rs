@@ -113,7 +113,7 @@ pub fn get_frontmost_app() -> String {
 pub fn get_frontmost_app() -> String {
     // Try to get active window using xdotool (needs to be installed)
     let output = Command::new("xdotool")
-        .args(&["getactivewindow", "getwindowname"])
+        .args(["getactivewindow", "getwindowname"])
         .output();
 
     if let Ok(output) = output {

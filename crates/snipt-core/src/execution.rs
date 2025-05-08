@@ -98,7 +98,7 @@ pub fn execute_snippet(
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn();
-            return Ok(());
+             Ok(())
         }
 
         #[cfg(target_os = "windows")]
@@ -108,7 +108,7 @@ pub fn execute_snippet(
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn();
-            return Ok(());
+            Ok(())
         }
     } else if is_script(content) {
         // Execute script and type its output
