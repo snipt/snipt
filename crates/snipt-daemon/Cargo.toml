@@ -7,3 +7,4 @@ edition = "2021"
 snipt-core = { path = "../snipt-core" }
 snipt-server = { path = "../snipt-server" }
 rdev = { workspace = true }
+whoami = "1.5.1"
