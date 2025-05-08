@@ -98,7 +98,7 @@ pub fn execute_snippet(
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn();
-             Ok(())
+            Ok(())
         }
 
         #[cfg(target_os = "windows")]
