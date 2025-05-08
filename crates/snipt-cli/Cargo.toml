@@ -2,6 +2,12 @@
 name = "snipt-cli"
 version = "0.1.0"
 edition = "2021"
+authors = ["bahdotsh"]
+description = "Command-line interface for the Snipt application"
+license = "MIT"
+repository = "https://github.com/bahdotsh/snipt"
+keywords = ["cli", "clipboard", "automation", "productivity"]
+categories = ["command-line-utilities", "development-tools"]
 
 # This crate produces the main binary
 [[bin]]

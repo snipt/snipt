@@ -28,7 +28,7 @@ if [ "$1" == "--dry-run" ]; then
 fi
 
 # Array of crates to publish in order
-CRATES=("snipt-core" "snipt-cli" "snipt-server" "snipt-ui")
+CRATES=("snipt-core" "snipt-daemon" "snipt-server" "snipt-ui" "snipt-cli")
 
 # Function to publish a crate
 publish_crate() {
