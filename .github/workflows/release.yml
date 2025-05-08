@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to use (e.g. v1.0.0)'
+        required: true
+        default: 'test-release'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      
+      - name: Install git-cliff
+        run: |
+          cargo install git-cliff --force
+      
+      - name: Generate Changelog
+        run: git-cliff --latest --output CHANGELOG.md
+      
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "Snipt ${{ github.event.inputs.version || github.ref_name }}"
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          tag_name: ${{ github.event.inputs.version || github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-release:
+    name: Build Release
+    needs: [create-release]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: snipt
+            asset_name: snipt-${{ github.event.inputs.version || github.ref_name }}-linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: snipt
+            asset_name: snipt-${{ github.event.inputs.version || github.ref_name }}-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: snipt
+            asset_name: snipt-${{ github.event.inputs.version || github.ref_name }}-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: snipt.exe
+            asset_name: snipt-${{ github.event.inputs.version || github.ref_name }}-windows-x86_64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+      
+      - name: Build Release Binary
+        run: cargo build --release --target ${{ matrix.target }}
+      
+      - name: Compress Release Binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p compressed
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} compressed/
+          cd compressed
+          tar czvf ${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
+          echo "ASSET=${{ matrix.asset_name }}.tar.gz" >> $GITHUB_ENV
+          echo "ASSET_PATH=compressed/${{ matrix.asset_name }}.tar.gz" >> $GITHUB_ENV
+      
+      - name: Compress Release Binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p compressed
+          copy target\${{ matrix.target }}\release\${{ matrix.artifact_name }} compressed\
+          cd compressed
+          7z a ${{ matrix.asset_name }}.zip ${{ matrix.artifact_name }}
+          echo "ASSET=${{ matrix.asset_name }}.zip" >> $env:GITHUB_ENV
+          echo "ASSET_PATH=compressed\${{ matrix.asset_name }}.zip" >> $env:GITHUB_ENV
+        shell: pwsh
+      
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ env.ASSET_PATH }}
+          tag_name: ${{ github.event.inputs.version || github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
