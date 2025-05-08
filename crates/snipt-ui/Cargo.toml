@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["bahdotsh"]
 description = "User interface components for the Snipt application"
 license = "MIT"
-repository = "https://github.com/bahdotsh/snipt"
+repository = "https://github.com/snipt/snipt"
 keywords = ["ui", "tui", "clipboard", "automation", "productivity"]
 categories = ["command-line-utilities", "development-tools"]
 

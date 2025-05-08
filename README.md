@@ -40,7 +40,7 @@ snipt is a powerful text snippet expansion tool that boosts your productivity by
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # 2. Clone and build snipt
-git clone https://github.com/bahdotsh/snipt.git
+git clone https://github.com/snipt/snipt.git
 cd snipt
 cargo build --release
 
