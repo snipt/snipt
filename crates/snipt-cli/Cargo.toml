@@ -1,6 +1,6 @@
 [package]
 name = "snipt-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["bahdotsh"]
 description = "Command-line interface for the Snipt application"
@@ -13,6 +13,11 @@ categories = ["command-line-utilities", "development-tools"]
 [[bin]]
 name = "snipt-cli"
 path = "src/main.rs"
+
+# Add a lib target so other crates can depend on it
+[lib]
+name = "snipt_cli"
+path = "src/lib.rs"
 
 [dependencies]
 snipt-core = { version = "0.1.0", path = "../snipt-core" }

@@ -8,9 +8,9 @@ use commands::handle_command;
 use std::env;
 use std::process;
 
-// Keep the original main function for direct use
+// Just a simple entry point that calls the library function
 fn main() {
-    snipt_cli::run_main()
+    snipt_cli::run_main();
 }
 
 // Export this function to be called from the snipt crate
