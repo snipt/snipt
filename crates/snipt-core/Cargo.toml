@@ -2,6 +2,12 @@
 name = "snipt-core"
 version = "0.1.0"
 edition = "2021"
+authors = ["bahdotsh"]
+description = "Core functionality for the Snipt application"
+license = "MIT"
+repository = "https://github.com/yourusername/snipt"
+keywords = ["clipboard", "automation", "productivity"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 tempfile = "3.10.1"
