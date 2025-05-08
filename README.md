@@ -85,14 +85,16 @@ Snipt supports two types of triggers:
 
 1. **Colon Trigger (`:`)**: For simple text expansion
    ```
-   :hello  # Expands to "Hello, world!"
+   :hello  # Expands to "Hello, world!" (if you've created this snippet)
    ```
 
 2. **Exclamation Trigger (`!`)**: For executing scripts and transformations
    ```
-   !now    # Inserts current date and time
-   !uppercase(hello)  # Transforms to "HELLO"
+   !now    # Inserts current date and time (if you've created this snippet)
+   !uppercase(hello)  # Transforms to "HELLO" (if you've created this snippet)
    ```
+
+> **Important Note**: All snippets, including text transformations and commands, must be created first using `snipt add` or `snipt new` before they can be used. The examples above assume you have already created these snippets. See the "Managing Snippets" section below for how to create your own snippets.
 
 ### Parameterized Snippets
 
@@ -120,17 +122,18 @@ snipt add --shortcut "sys-info" --snippet "#!/bin/bash\necho '=== System Informa
 
 ### Text Transformations
 
-Transform text with built-in functions:
+Transform text with built-in functions. Remember to create these snippets first:
 
 ```bash
-# Case conversion
+# First, create the transformation snippets
+snipt add --shortcut "uppercase" --snippet "#!/bin/bash\necho \"$1\" | tr '[:lower:]' '[:upper:]'"
+snipt add --shortcut "lowercase" --snippet "#!/bin/bash\necho \"$1\" | tr '[:upper:]' '[:lower:]'"
+snipt add --shortcut "titlecase" --snippet "#!/bin/bash\necho \"$1\" | sed 's/.*/\L&/; s/[a-z]*/\u&/g'"
+
+# Then you can use them like this:
 !uppercase(hello)  # HELLO
 !lowercase(HELLO)  # hello
 !titlecase(hello world)  # Hello World
-
-# Formatting
-!indent(2,Hello\nWorld)  # Adds 2-space indentation
-!csv2md(Name,Age,John,30)  # Converts CSV to markdown table
 ```
 
 ### Monitoring & Control
@@ -205,22 +208,22 @@ snipt consists of several components:
 #### Linux (Ubuntu/Debian)
 ```bash
 sudo apt-get update
-sudo apt-get install -y libx11-dev libxi-dev libxtst-dev pkg-config
+sudo apt-get install -y libx11-dev libxi-dev libxtst-dev pkg-config libxdo-dev
 ```
 
 #### Linux (Fedora/RHEL)
 ```bash
-sudo dnf install libX11-devel libXi-devel libXtst-devel pkg-config
+sudo dnf install libX11-devel libXi-devel libXtst-devel pkg-config libxdo-devel
 ```
 
 #### Linux (Arch Linux)
 ```bash
-sudo pacman -S libx11 libxi libxtst pkg-config
+sudo pacman -S libx11 libxi libxtst pkg-config xdotool
 ```
 
 #### Linux (openSUSE)
 ```bash
-sudo zypper install libX11-devel libXi-devel libXtst-devel pkg-config
+sudo zypper install libX11-devel libXi-devel libXtst-devel pkg-config libxdo-devel
 ```
 
 Note: These dependencies are required for X11 window system integration and keyboard monitoring functionality.
