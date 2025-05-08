@@ -20,6 +20,16 @@ snipt is a powerful text snippet expansion tool that boosts your productivity by
 - **Background Daemon**: Silent monitoring of keyboard input for expansion
 - **Cross-Platform**: Works seamlessly on Linux, macOS, and Windows
 - **Clipboard Integration**: Quickly copy expansions to clipboard
+- **Script Execution**: Execute shell scripts and commands with `!` prefix
+- **Parameterized Snippets**: Create dynamic snippets with parameters
+- **Text Transformations**: Transform text with case conversion, formatting, and more
+- **URL Commands**: Execute web requests and process responses
+- **Code Snippets**: Store and expand code snippets with syntax highlighting
+- **Date and Time**: Insert formatted dates and times
+- **File Operations**: Create projects and perform file operations
+- **System Information**: Get system stats and information
+- **Network Tools**: Make HTTP requests and process responses
+- **CSV Processing**: Convert CSV to markdown tables and other formats
 
 ## 📦 Installation
 
@@ -67,6 +77,60 @@ snipt delete --shortcut hello
 
 # Update existing snippet
 snipt update --shortcut hello --snippet "Hello there, world!"
+```
+
+### Using Snippets
+
+Snipt supports two types of triggers:
+
+1. **Colon Trigger (`:`)**: For simple text expansion
+   ```
+   :hello  # Expands to "Hello, world!"
+   ```
+
+2. **Exclamation Trigger (`!`)**: For executing scripts and transformations
+   ```
+   !now    # Inserts current date and time
+   !uppercase(hello)  # Transforms to "HELLO"
+   ```
+
+### Parameterized Snippets
+
+Create dynamic snippets with parameters:
+
+```bash
+# Add a parameterized snippet
+snipt add --shortcut "greet(name)" --snippet "Hello, ${name}!"
+
+# Usage
+!greet(John)  # Expands to "Hello, John!"
+```
+
+### Script Execution
+
+Execute shell scripts and commands:
+
+```bash
+# Add a script snippet
+snipt add --shortcut "sys-info" --snippet "#!/bin/bash\necho '=== System Information ==='\necho 'Hostname: $(hostname)'"
+
+# Usage
+!sys-info  # Executes the script and inserts output
+```
+
+### Text Transformations
+
+Transform text with built-in functions:
+
+```bash
+# Case conversion
+!uppercase(hello)  # HELLO
+!lowercase(HELLO)  # hello
+!titlecase(hello world)  # Hello World
+
+# Formatting
+!indent(2,Hello\nWorld)  # Adds 2-space indentation
+!csv2md(Name,Age,John,30)  # Converts CSV to markdown table
 ```
 
 ### Monitoring & Control
@@ -121,11 +185,15 @@ snipt stores your data in `~/.snipt/`:
 
 snipt consists of several components:
 
-- **Core Library**: Handles snippet management and persistence
+- **Core Library**: Handles snippet management, persistence, and expansion
 - **Daemon**: Background process that listens for keyboard events
 - **CLI**: Command-line interface for controlling snipt
 - **TUI**: Terminal user interface for snippet management
 - **Server**: HTTP API for potential GUI clients
+- **Execution Engine**: Handles script execution and text transformations
+- **Storage**: Manages snippet persistence and configuration
+- **Keyboard**: Handles system-wide keyboard monitoring
+- **Clipboard**: Manages clipboard operations
 
 ## 🔨 Requirements
 
