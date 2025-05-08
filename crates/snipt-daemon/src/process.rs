@@ -98,7 +98,7 @@ pub fn detect_linux_terminal() -> String {
 
     // Try to get from process tree
     let output = std::process::Command::new("ps")
-        .args(&["-p", &format!("{}", std::process::id()), "-o", "args="])
+        .args(["-p", &format!("{}", std::process::id()), "-o", "args="])
         .output();
 
     if let Ok(output) = output {

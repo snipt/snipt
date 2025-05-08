@@ -6,9 +6,7 @@ use crate::process::{
 };
 
 #[cfg(target_os = "linux")]
-use crate::process::{
-    detect_desktop_environment, detect_linux_terminal, is_running_as_sudo, verify_process_running,
-};
+use crate::process::{detect_desktop_environment, detect_linux_terminal, is_running_as_sudo};
 
 #[cfg(target_os = "windows")]
 use crate::process::{
@@ -345,10 +343,7 @@ fn has_input_permission() -> bool {
 
     // Try to read from /dev/input/event0 as a test
     if Path::new("/dev/input/event0").exists() {
-        match std::fs::File::open("/dev/input/event0") {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        std::fs::File::open("/dev/input/event0").is_ok()
     } else {
         // If the file doesn't exist, check group membership
         let output = std::process::Command::new("groups")
@@ -415,7 +410,21 @@ fn request_linux_permissions() -> Result<()> {
     println!("   sudo snipt start");
 
     // Using is_running_as_sudo() from process.rs
-    if !is_running_as_sudo() {
+    if is_running_as_sudo() {
+        // Add user to input group
+        let username = whoami::username();
+        let status = std::process::Command::new("sudo")
+            .args(["usermod", "-a", "-G", "input", &username])
+            .status()?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(SniptError::PermissionDenied(
+                "Unable to access input devices even with elevated privileges".to_string(),
+            ))
+        }
+    } else {
         println!("\nWould you like to try granting permissions now? (y/n)");
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
@@ -462,18 +471,6 @@ fn request_linux_permissions() -> Result<()> {
                 "snipt needs input device permissions to function".to_string(),
             ));
         }
-    }
-
-    // If we're already running as sudo, check if we have access now
-    if has_input_permission() {
-        println!("✅ Input device permissions verified!");
-        return Ok(());
-    } else {
-        println!("❌ Still unable to access input devices, even with sudo.");
-        println!("This might be due to additional security measures on your system.");
-        return Err(SniptError::PermissionDenied(
-            "Unable to access input devices even with elevated privileges".to_string(),
-        ));
     }
 }
 
@@ -547,10 +544,12 @@ fn inform_windows_permissions() -> Result<()> {
 }
 
 // Add a reusable permissions verification function
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[allow(dead_code)]
 pub fn verify_permissions() -> bool {
-    // For platforms where permissions could be revoked at runtime
-    // Rerun our permission checks to see if they're still valid
+    #[cfg(target_os = "macos")]
+    {
+        has_accessibility_permission()
+    }
 
     #[cfg(target_os = "linux")]
     {
@@ -559,14 +558,6 @@ pub fn verify_permissions() -> bool {
 
     #[cfg(target_os = "windows")]
     {
-        // On Windows, we don't have a reliable way to check if we still have permissions
-        // So we'll assume we do, but we could add more checks here
-        true
+        true // Windows doesn't have explicit permissions
     }
-}
-
-#[cfg(target_os = "macos")]
-pub fn verify_permissions() -> bool {
-    // For macOS, check if we still have accessibility permissions
-    has_accessibility_permission()
 }
