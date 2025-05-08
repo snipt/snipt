@@ -462,14 +462,14 @@ fn request_linux_permissions() -> Result<()> {
                 println!("  sudo snipt start");
             }
 
-            return Err(SniptError::PermissionDenied(
+            Err(SniptError::PermissionDenied(
                 "snipt needs input device permissions to function. Please restart after fixing permissions.".to_string(),
-            ));
+            ))
         } else {
             println!("Permission not granted. snipt may not function correctly.");
-            return Err(SniptError::PermissionDenied(
+            Err(SniptError::PermissionDenied(
                 "snipt needs input device permissions to function".to_string(),
-            ));
+            ))
         }
     }
 }
