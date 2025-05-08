@@ -441,7 +441,7 @@ fn request_linux_permissions() -> Result<()> {
                 let username =
                     std::env::var("USER").unwrap_or_else(|_| "your_username".to_string());
                 let status = std::process::Command::new("sudo")
-                    .args(&["usermod", "-a", "-G", "input", &username])
+                    .args(["usermod", "-a", "-G", "input", &username])
                     .status();
 
                 match status {

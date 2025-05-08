@@ -205,18 +205,25 @@ snipt consists of several components:
 #### Linux (Ubuntu/Debian)
 ```bash
 sudo apt-get update
-sudo apt-get install -y libx11-dev libxi-dev pkg-config
+sudo apt-get install -y libx11-dev libxi-dev libxtst-dev pkg-config
 ```
 
 #### Linux (Fedora/RHEL)
 ```bash
-sudo dnf install libX11-devel libXi-devel pkg-config
+sudo dnf install libX11-devel libXi-devel libXtst-devel pkg-config
 ```
 
 #### Linux (Arch Linux)
 ```bash
-sudo pacman -S libx11 libxi pkg-config
+sudo pacman -S libx11 libxi libxtst pkg-config
 ```
+
+#### Linux (openSUSE)
+```bash
+sudo zypper install libX11-devel libXi-devel libXtst-devel pkg-config
+```
+
+Note: These dependencies are required for X11 window system integration and keyboard monitoring functionality.
 
 ## 🤝 Contributing
 
