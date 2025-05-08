@@ -1,0 +1,22 @@
+[package]
+name = "snipt"
+version = "0.1.0"
+edition = "2021"
+authors = ["bahdotsh"]
+description = "Snipt - A clipboard manager and automation tool"
+license = "MIT"
+repository = "https://github.com/snipt/snipt"
+keywords = ["clipboard", "automation", "productivity", "snippet"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+default-run = "snipt"
+
+# Important for `cargo install snipt` to work
+[[bin]]
+name = "snipt"
+path = "src/main.rs"
+
+[dependencies]
+snipt-cli = { version = "0.1.0", path = "../snipt-cli" }
+
+# Add any other direct dependencies that should be included in the published package 

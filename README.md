@@ -33,6 +33,13 @@ snipt is a powerful text snippet expansion tool that boosts your productivity by
 
 ## 📦 Installation
 
+### Via Cargo (Recommended)
+
+```bash
+# Install directly from crates.io
+cargo install snipt
+```
+
 ### From Source
 
 ```bash

@@ -11,7 +11,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 # This crate produces the main binary
 [[bin]]
-name = "snipt"
+name = "snipt-cli"
 path = "src/main.rs"
 
 [dependencies]

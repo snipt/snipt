@@ -1,6 +1,6 @@
-mod cli;
-mod commands;
-mod utils;
+pub mod cli;
+pub mod commands;
+pub mod utils;
 
 use clap::Parser;
 use cli::Snipt;
@@ -8,12 +8,7 @@ use commands::handle_command;
 use std::env;
 use std::process;
 
-// Keep the original main function for direct use
-fn main() {
-    snipt_cli::run_main()
-}
-
-// Export this function to be called from the snipt crate
+/// Run the snipt CLI application
 pub fn run_main() {
     // Special hidden flag for daemon worker process
     if env::args().any(|arg| arg == "--daemon-worker") {

@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/snipt",
     "crates/snipt-cli",
     "crates/snipt-core",
     "crates/snipt-server",
     "crates/snipt-ui",
+    "crates/snipt-daemon",
 ]
 
 [workspace.dependencies]
