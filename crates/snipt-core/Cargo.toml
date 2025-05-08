@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["bahdotsh"]
 description = "Core functionality for the Snipt application"
 license = "MIT"
-repository = "https://github.com/yourusername/snipt"
+repository = "https://github.com/bahdotsh/snipt"
 keywords = ["clipboard", "automation", "productivity"]
 categories = ["command-line-utilities", "development-tools"]
 
