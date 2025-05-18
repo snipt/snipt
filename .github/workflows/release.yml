@@ -40,12 +40,21 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
       
+      - uses: Swatinem/rust-cache@v2
+      
       - name: Install git-cliff
-        run: |
-          cargo install git-cliff --force
+        uses: actions/cache@v3
+        id: git-cliff-cache
+        with:
+          path: ~/.cargo/bin/git-cliff
+          key: ${{ runner.os }}-git-cliff-0.10.0  # Update version as needed
+      
+      - name: Install git-cliff if not cached
+        if: steps.git-cliff-cache.outputs.cache-hit != 'true'
+        run: cargo install git-cliff --force
       
       - name: Generate Changelog
-        run: git-cliff --latest --output CHANGELOG.md
+        run: git-cliff --config .github/cliff.toml --output CHANGELOG.md
       
       - name: Check if tag exists
         id: check_tag
