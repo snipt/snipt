@@ -17,6 +17,6 @@ name = "snipt"
 path = "src/main.rs"
 
 [dependencies]
-snipt-cli = { version = "0.1.0", path = "../snipt-cli" }
+snipt-cli = { version = "0.1.1", path = "../snipt-cli" }
 
 # Add any other direct dependencies that should be included in the published package 
