@@ -19,7 +19,7 @@ crossterm = "0.27"
 ratatui = "0.23"
 tokio = { version = "1.44.2", features = ["full"] }
 warp = "0.3"
-rdev = "0.5"
-enigo = "0.3.0"
-arboard = "3.2.0"
+rdev = { version = "0.5.3", features = ["unstable_grab", "serialize"] }
+enigo = { version = "0.3.0", features = ["wayland", "x11rb"] }
+arboard = { version = "3.2.0", features = ["wayland-data-control"] }
 thiserror = "1.0"

@@ -1,6 +1,6 @@
 [package]
 name = "snipt-daemon"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["bahdotsh"]
 description = "Background daemon for the Snipt application"

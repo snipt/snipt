@@ -34,245 +34,208 @@ pub fn start_keyboard_listener(
 
     thread::spawn(move || {
         // Create a callback function closure
-        let callback = move |event: rdev::Event| {
+        let callback = move |event: rdev::Event| -> Option<rdev::Event> {
             if !*running_clone.lock().unwrap() {
-                return;
+                return Some(event);
             }
 
-            // Update modifier key states
+            // Handle modifier state updates first, then decide if it's a KeyPress to process further
             match event.event_type {
-                EventType::KeyPress(key) => match key {
-                    RdevKey::MetaLeft | RdevKey::MetaRight => {
-                        *cmd_clone.lock().unwrap() = true;
+                EventType::KeyPress(key) => {
+                    // Update modifier state for KeyPress
+                    match key {
+                        RdevKey::MetaLeft | RdevKey::MetaRight => {
+                            *cmd_clone.lock().unwrap() = true;
+                        }
+                        RdevKey::ControlLeft | RdevKey::ControlRight => {
+                            *ctrl_clone.lock().unwrap() = true;
+                        }
+                        _ => {}
                     }
-                    RdevKey::ControlLeft | RdevKey::ControlRight => {
-                        *ctrl_clone.lock().unwrap() = true;
+                    // Proceed to main KeyPress logic
+                }
+                EventType::KeyRelease(key) => {
+                    match key {
+                        RdevKey::MetaLeft | RdevKey::MetaRight => {
+                            *cmd_clone.lock().unwrap() = false;
+                        }
+                        RdevKey::ControlLeft | RdevKey::ControlRight => {
+                            *ctrl_clone.lock().unwrap() = false;
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                },
-                EventType::KeyRelease(key) => match key {
-                    RdevKey::MetaLeft | RdevKey::MetaRight => {
-                        *cmd_clone.lock().unwrap() = false;
-                    }
-                    RdevKey::ControlLeft | RdevKey::ControlRight => {
-                        *ctrl_clone.lock().unwrap() = false;
-                    }
-                    _ => {}
-                },
-                _ => {} // Handle all other event types
+                    return Some(event);
+                }
+                _ => return Some(event),
             }
-            if let EventType::KeyPress(key) = event.event_type {
-                let mut buffer = buffer_clone.lock().unwrap();
-                let mut just_expanded = expanded_flag_clone.lock().unwrap();
 
-                // Handle paste command (Cmd+V on macOS, Ctrl+V on other platforms)
-                let is_paste = match key {
-                    RdevKey::KeyV => {
-                        #[cfg(target_os = "macos")]
-                        {
-                            *cmd_clone.lock().unwrap()
-                        }
-                        #[cfg(not(target_os = "macos"))]
-                        {
-                            *ctrl_clone.lock().unwrap()
-                        }
+            // This point is reached only for EventType::KeyPress
+            // We need to get the key again from event.event_type
+            let key = match event.event_type {
+                EventType::KeyPress(k) => k,
+                _ => return Some(event),
+            };
+
+            let mut buffer = buffer_clone.lock().unwrap();
+            let mut just_expanded_val = expanded_flag_clone.lock().unwrap();
+
+            // Handle paste command (Cmd+V on macOS, Ctrl+V on other platforms)
+            let is_paste = match key {
+                RdevKey::KeyV => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        *cmd_clone.lock().unwrap()
                     }
-                    _ => false,
-                };
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        *ctrl_clone.lock().unwrap()
+                    }
+                }
+                _ => false,
+            };
 
-                if is_paste {
-                    // Try to get clipboard content
-                    if let Ok(clipboard_text) = get_clipboard_text() {
-                        // Add all characters from the clipboard to the buffer at once
-                        for c in clipboard_text.chars() {
-                            buffer.push((c, Instant::now()));
-                        }
+            if is_paste {
+                if let Ok(clipboard_text) = get_clipboard_text() {
+                    let temp_buffer_for_paste_check: String =
+                        buffer.iter().map(|(c, _)| *c).collect::<String>() + &clipboard_text;
+                    let snippets_guard = snippets_clone.lock().unwrap();
 
-                        // Check for expansion only once after the entire paste
-                        let buffer_text: String = buffer.iter().map(|(c, _)| *c).collect();
-                        let snippets_guard = snippets_clone.lock().unwrap();
+                    if let Ok(Some(_)) =
+                        process_expansion(&temp_buffer_for_paste_check, &snippets_guard)
+                    {
+                        let current_buffer_text_for_paste: String =
+                            buffer.iter().map(|(c, _)| *c).collect();
+                        let combined_text_for_check =
+                            current_buffer_text_for_paste + &clipboard_text;
 
-                        if let Ok(Some(expansion)) =
-                            process_expansion(&buffer_text, &snippets_guard)
+                        if let Ok(Some(expansion_from_paste)) =
+                            process_expansion(&combined_text_for_check, &snippets_guard)
                         {
-                            // Found a matching expansion pattern!
-                            let chars_to_delete = buffer_text.len();
-
-                            // Handle the expansion or execution
-                            let _ = handle_expansion(chars_to_delete, expansion);
-
-                            // Set flag that we just expanded/executed
-                            *just_expanded = true;
-
-                            // Clear buffer completely
+                            let _ = handle_expansion(
+                                combined_text_for_check.len(),
+                                expansion_from_paste,
+                            );
+                            *just_expanded_val = true;
                             buffer.clear();
-                            return;
-                        }
-
-                        // If we didn't expand, we should keep the buffer for potential future matches
-                        if !*just_expanded {
-                            return;
+                            return None;
                         }
                     }
                 }
+                return Some(event);
+            }
 
-                // Handle special keys
-                match key {
-                    RdevKey::Space | RdevKey::Return | RdevKey::Tab => {
-                        // Check if we should expand the current buffer
-                        if !buffer.is_empty() {
-                            // Get the characters from the buffer, ignore timestamps
-                            let buffer_text: String = buffer.iter().map(|(c, _)| *c).collect();
+            // Handle special keys
+            match key {
+                RdevKey::Space | RdevKey::Return | RdevKey::Tab => {
+                    if !buffer.is_empty() {
+                        let buffer_text: String = buffer.iter().map(|(c, _)| *c).collect();
 
-                            // Check if we're in the middle of a function-call syntax with open parenthesis
-                            if buffer_text.contains('(') && !buffer_text.contains(')') {
-                                // Still collecting parameters, don't expand yet
-                                buffer.push((' ', Instant::now()));
-                                return;
-                            }
+                        if buffer_text.contains('(') && !buffer_text.contains(')') {
+                            buffer.push((' ', Instant::now()));
+                            return Some(event);
+                        }
 
-                            let snippets_guard = snippets_clone.lock().unwrap();
-                            if let Ok(Some(expansion)) =
-                                process_expansion(&buffer_text, &snippets_guard)
+                        let snippets_guard = snippets_clone.lock().unwrap();
+                        if let Ok(Some(expansion)) =
+                            process_expansion(&buffer_text, &snippets_guard)
+                        {
+                            let _ = handle_expansion(buffer_text.len(), expansion);
+                            *just_expanded_val = true;
+                            buffer.clear();
+                            return None;
+                        }
+                    }
+
+                    if *just_expanded_val {
+                        buffer.clear();
+                        *just_expanded_val = false;
+                    }
+                    buffer.clear();
+                    Some(event)
+                }
+                RdevKey::Backspace => {
+                    if !buffer.is_empty() {
+                        buffer.pop();
+                    }
+                    Some(event)
+                }
+                RdevKey::Escape => {
+                    buffer.clear();
+                    Some(event)
+                }
+                _ => {
+                    if *just_expanded_val {
+                        buffer.clear();
+                        *just_expanded_val = false;
+                    }
+
+                    if let Some(c) = rdev_key_to_char(&key, &event) {
+                        buffer.push((c, Instant::now()));
+
+                        let snippets_guard = snippets_clone.lock().unwrap();
+
+                        if c == ')' {
+                            let buffer_text_fn: String = buffer.iter().map(|(c, _)| *c).collect();
+                            if buffer_text_fn.starts_with(EXECUTE_CHAR)
+                                && buffer_text_fn.contains('(')
                             {
-                                // Delete the special character and shortcut, then expand or execute
-                                let _ = handle_expansion(buffer_text.len(), expansion);
-
-                                // Set flag that we just expanded
-                                *just_expanded = true;
-
-                                // Clear buffer completely for fresh start
-                                buffer.clear();
-                                return; // Skip adding the space/newline/tab
-                            }
-                        }
-
-                        // If we didn't expand or buffer was empty, add the space/newline/tab
-                        // But first check if we need to reset after expansion
-                        if *just_expanded {
-                            buffer.clear();
-                            *just_expanded = false;
-                        }
-
-                        // Let the key through (don't add to our buffer though)
-                        buffer.clear();
-                    }
-                    RdevKey::Backspace => {
-                        if !buffer.is_empty() {
-                            buffer.pop();
-                        }
-                    }
-                    RdevKey::Escape => {
-                        // Clear buffer on escape
-                        buffer.clear();
-                    }
-                    _ => {
-                        // If we just expanded and now typing a new character,
-                        // reset buffer to start fresh
-                        if *just_expanded {
-                            buffer.clear();
-                            *just_expanded = false;
-                        }
-
-                        // Add the character to our buffer
-                        if let Some(c) = rdev_key_to_char(&key, &event) {
-                            buffer.push((c, Instant::now()));
-
-                            // Get a lock on snippets for the checks
-                            let snippets_guard = snippets_clone.lock().unwrap();
-
-                            // Check if this is a closing parenthesis and we might have a complete function call
-                            if c == ')' {
-                                let buffer_text: String = buffer.iter().map(|(c, _)| *c).collect();
-
-                                // Check for function call pattern
-                                if buffer_text.starts_with(EXECUTE_CHAR)
-                                    && buffer_text.contains('(')
+                                if let Ok(Some(expansion)) =
+                                    process_expansion(&buffer_text_fn, &snippets_guard)
                                 {
-                                    if let Ok(Some(expansion)) =
-                                        process_expansion(&buffer_text, &snippets_guard)
-                                    {
-                                        // Found a matching function call pattern!
-                                        let chars_to_delete = buffer_text.len();
-
-                                        // Handle the expansion with parameters
-                                        let _ = handle_expansion(chars_to_delete, expansion);
-
-                                        // Set flag that we just expanded/executed
-                                        *just_expanded = true;
-
-                                        // Clear buffer completely
-                                        buffer.clear();
-                                        return;
-                                    }
+                                    let _ = handle_expansion(buffer_text_fn.len(), expansion);
+                                    *just_expanded_val = true;
+                                    buffer.clear();
+                                    return None;
                                 }
                             }
+                        }
 
-                            // The most recent character could be a trigger
-                            if (c == SPECIAL_CHAR || c == EXECUTE_CHAR) && buffer.len() == 1 {
-                                // Just added a potential trigger, continue collecting
-                                drop(snippets_guard);
-                                return;
-                            }
+                        if (c == SPECIAL_CHAR || c == EXECUTE_CHAR) && buffer.len() == 1 {
+                            return Some(event);
+                        }
 
-                            // Look for both text expansion and execution patterns in the buffer
-                            // This handles triggers in the middle of text
-                            for i in 0..buffer.len() {
-                                let first_char = buffer[i].0;
-                                if (first_char == SPECIAL_CHAR || first_char == EXECUTE_CHAR)
-                                    && i < buffer.len() - 1
+                        for i in 0..buffer.len() {
+                            let first_char = buffer[i].0;
+                            if (first_char == SPECIAL_CHAR || first_char == EXECUTE_CHAR)
+                                && i < buffer.len() - 1
+                            {
+                                let potential_snippet: String =
+                                    buffer[i..].iter().map(|(ci, _)| *ci).collect();
+
+                                if potential_snippet.contains('(')
+                                    && !potential_snippet.contains(')')
                                 {
-                                    // Extract potential snippet from this position onward
-                                    let potential_snippet: String =
-                                        buffer[i..].iter().map(|(c, _)| *c).collect();
+                                    continue;
+                                }
 
-                                    // Skip if we have an open parenthesis without a closing one
-                                    // This allows function-call syntax to be collected fully
-                                    if potential_snippet.contains('(')
-                                        && !potential_snippet.contains(')')
-                                    {
-                                        continue;
-                                    }
-
-                                    if let Ok(Some(expansion)) =
-                                        process_expansion(&potential_snippet, &snippets_guard)
-                                    {
-                                        // Found a matching expansion pattern!
-                                        // Calculate how many characters to delete (the trigger and shortcut)
-                                        let chars_to_delete = potential_snippet.len();
-
-                                        // Handle the expansion or execution
-                                        let _ = handle_expansion(chars_to_delete, expansion);
-
-                                        // Set flag that we just expanded/executed
-                                        *just_expanded = true;
-
-                                        // Remove the expanded part from buffer
-                                        buffer.drain(i..);
-                                        return;
-                                    }
+                                if let Ok(Some(expansion)) =
+                                    process_expansion(&potential_snippet, &snippets_guard)
+                                {
+                                    let _ = handle_expansion(potential_snippet.len(), expansion);
+                                    *just_expanded_val = true;
+                                    buffer.drain(i..);
+                                    return None;
                                 }
                             }
-
-                            // Clean up old characters (older than 10 seconds)
-                            let now = Instant::now();
-                            buffer.retain(|(_, timestamp)| {
-                                now.duration_since(*timestamp) < Duration::from_secs(10)
-                            });
-
-                            // Cap buffer size to prevent memory bloat (100 chars is plenty)
-                            while buffer.len() > 100 {
-                                buffer.remove(0);
-                            }
                         }
+                        let now = Instant::now();
+                        buffer.retain(|(_, timestamp)| {
+                            now.duration_since(*timestamp) < Duration::from_secs(10)
+                        });
+                        while buffer.len() > 100 {
+                            buffer.remove(0);
+                        }
+                        Some(event)
+                    } else {
+                        Some(event)
                     }
                 }
             }
         };
 
         // Register the callback
-        if let Err(error) = rdev::listen(callback) {
-            eprintln!("Error: Unable to listen for keyboard events: {:?}", error);
+        if let Err(error) = rdev::grab(callback) {
+            eprintln!("Error: Unable to grab keyboard events: {:?}. Ensure you have necessary permissions (e.g., member of 'input' group on Linux for Wayland/evdev).", error);
         }
     })
 }

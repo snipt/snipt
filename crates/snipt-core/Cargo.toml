@@ -1,6 +1,6 @@
 [package]
 name = "snipt-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["bahdotsh"]
 description = "Core functionality for the Snipt application"
@@ -14,10 +14,10 @@ tempfile = "3.10.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { workspace = true }
-rdev = "0.5.3"
-enigo = "0.3.0"
+rdev = { workspace = true }
+enigo = { workspace = true }
 thiserror = { workspace = true }
-arboard = "3.3.0"
+arboard = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.25.0"

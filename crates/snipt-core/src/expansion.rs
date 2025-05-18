@@ -111,7 +111,15 @@ pub fn get_frontmost_app() -> String {
 /// Helper function to detect the frontmost application (Linux)
 #[cfg(target_os = "linux")]
 pub fn get_frontmost_app() -> String {
-    // Try to get active window using xdotool (needs to be installed)
+    // Check if running under Wayland
+    if std::env::var("WAYLAND_DISPLAY").is_ok() {
+        // xdotool is unreliable on Wayland for getting the active Wayland window.
+        // It might get an XWayland window or fail. Returning empty string for now.
+        // More sophisticated Wayland-specific detection is complex and DE-dependent.
+        return String::new();
+    }
+
+    // Try to get active window using xdotool (needs to be installed) - for X11
     let output = Command::new("xdotool")
         .args(["getactivewindow", "getwindowname"])
         .output();
